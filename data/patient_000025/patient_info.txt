@@ -1,0 +1,3 @@
+Patient ID: 000025
+Session Timestamp: 2025-06-18 18:11:48
+Patient Info: "房颤、高血压"
