@@ -47,12 +47,49 @@ class PictureLogger():
             os.makedirs(video_dir, exist_ok=True)
             print(f"[PictureLogger] Created video directory: {video_dir}")
         
+        # 计算平均帧率
+        total_duration = 0.0
+        frame_durations = []
+        
         with open(txt_path, "w") as f:
             for i in range(self.frame_count - 1):
                 dt = self.timestamps[i + 1] - self.timestamps[i]
+                frame_durations.append(dt)
+                total_duration += dt
                 f.write(f"file 'frame_{i:06d}.png'\n")
                 f.write(f"duration {dt:.6f}\n")
             f.write(f"file 'frame_{self.frame_count - 1:06d}.png'\n")
+
+        # 计算并打印帧率统计信息
+        if self.frame_count > 1 and total_duration > 0:
+            # 方法1: 基于总时长和帧数
+            video_duration = self.timestamps[-1] - self.timestamps[0]
+            average_fps_total = (self.frame_count - 1) / video_duration if video_duration > 0 else 0
+            
+            # 方法2: 基于平均帧间隔
+            average_frame_interval = total_duration / (self.frame_count - 1) if self.frame_count > 1 else 0
+            average_fps_interval = 1.0 / average_frame_interval if average_frame_interval > 0 else 0
+            
+            # 计算帧率的标准差
+            if len(frame_durations) > 1:
+                fps_values = [1.0/dt if dt > 0 else 0 for dt in frame_durations]
+                mean_fps = sum(fps_values) / len(fps_values)
+                variance = sum((fps - mean_fps) ** 2 for fps in fps_values) / len(fps_values)
+                std_fps = variance ** 0.5
+            else:
+                mean_fps = 0
+                std_fps = 0
+            
+            print(f"[PictureLogger] Video statistics:")
+            print(f"  - Total frames: {self.frame_count}")
+            print(f"  - Video duration: {video_duration:.3f} seconds")
+            print(f"  - Average FPS (total): {average_fps_total:.2f}")
+            print(f"  - Average FPS (interval): {average_fps_interval:.2f}")
+            print(f"  - FPS std deviation: {std_fps:.2f}")
+            print(f"  - Min frame interval: {min(frame_durations):.6f}s")
+            print(f"  - Max frame interval: {max(frame_durations):.6f}s")
+        else:
+            print(f"[PictureLogger] Insufficient data to calculate frame rate (frames: {self.frame_count})")
 
         # 使用绝对路径
         abs_video_path = os.path.abspath(self.video_path)
