@@ -629,17 +629,22 @@ class Pipeline:
                 print("No results in the queue, waiting...")
                 continue
             self.log_result_queue.put(result)
-            for item in result:
-                self.inference_results.append(item)
+            
+            # result格式是[timestamp, inference_result]
+            if len(result) >= 2:
+                timestamp, inference_result = result[0], result[1]
+                
+                # 只添加推理结果，不添加时间戳
+                self.inference_results.append(inference_result)
+                
+                # 保持缓冲区大小限制
                 if len(self.inference_results) > self.max_display_points:
                     self.inference_results.pop(0)
-            self.inference_results.extend(result)
-            self.inference_results = self.inference_results[-self.max_display_points:]
-
-            # Assuming result contains heart rate data (this is a placeholder)
-            new_heart_rate = result[0]  # This is a placeholder, adjust as needed
-            self.heart_rate_buffer.append(new_heart_rate)
-
+                
+                # 使用推理结果作为心率数据
+                new_heart_rate = inference_result  # 使用推理结果而不是result[0]
+                self.heart_rate_buffer.append(new_heart_rate)
+            
             # Ensure we only keep enough data for 10 seconds (e.g., 300 data points if fps = 30)
             if len(self.heart_rate_buffer) > self.config["fps"] * 10:
                 self.heart_rate_buffer.pop(0)  # Remove the oldest value
@@ -784,7 +789,7 @@ def main():
         "bmd101": {"serial_port": "/dev/ttyS0"},
         "max_queue_size": 512,
     })
-    peripmanager = PeripheralManager("/dev/ttyS2")
+    peripmanager = PeripheralManager("/dev/ttyS3")
     print("Loading Peripherals...Done")
 
     print("Loading Camera...")
@@ -836,7 +841,7 @@ def main():
     print("Loading Pipeline...Done")
 
     print("Loading Bluetooth...")
-    bluetooth_handler = BluetoothHandler(pipeline)
+    bluetooth_handler = BluetoothHandler(pipeline, peripmanager)
     bluetooth_handler.start()
     print("Loading Bluetooth...Done")
 
