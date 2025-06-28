@@ -543,7 +543,7 @@ class Pipeline:
                 writer.writerow(['timestamp', 'inference_result'])  # Write header
 
         if self.log:
-            print(f"Pipeline initialized")
+            print(f"[Pipeline] Pipeline initialized")
 
     def update_session_paths(self, session_paths):
         """更新会话路径"""
@@ -609,7 +609,7 @@ class Pipeline:
             outpath=session_paths["normalized_log"]
         )
         
-        print(f"Pipeline paths updated for session: {session_paths['session_dir']}")
+        print(f"[Pipeline] Pipeline paths updated for session: {session_paths['session_dir']}")
 
 
     def exchange_data(self, result_queue: queue.Queue, main_queue: queue.Queue) -> None:
@@ -626,7 +626,7 @@ class Pipeline:
             try:
                 result = self.main_queue.get(timeout=0.5)
             except:
-                print("No results in the queue, waiting...")
+                print("[Pipeline] No results in the queue, waiting...")
                 continue
             self.log_result_queue.put(result)
             
@@ -718,6 +718,7 @@ class Pipeline:
         self.threads.append(ir_picture_log_thread := threading.Thread(target=self.irpicturelogger, daemon=True, name="IRPictureLogThread"))
         for thread in self.threads:
             thread.start()
+        print("[Pipeline] Pipeline started")
 
     def stop(self) -> None:
         global_vars.pipeline_running = False
@@ -726,15 +727,15 @@ class Pipeline:
         self.normalizer()
         time.sleep(1)
         self.clear()
-        print("Pipeline stopped")
+        print("[Pipeline] Pipeline stopped")
 
     def clear(self):
         for thread in self.threads:
             try:
                 thread.join(timeout=1)  # Add a reasonable timeout
-                print(f"Thread {thread.name} joined successfully")
+                print(f"[Pipeline] Thread {thread.name} joined successfully")
             except Exception as e:
-                print(f"Error joining thread: {e}")
+                print(f"[Pipeline] Error joining thread: {e}")
         # Dictionary of all queues for systematic clearing
         queues = {
             "frame_queue": self.frame_queue,
@@ -759,7 +760,7 @@ class Pipeline:
                     except queue.Empty:
                         break
             except Exception as e:
-                print(f"Error clearing {name}: {e}")
+                print(f"[Pipeline] Error clearing {name}: {e}")
         
         # Reset object state
         self.inference_results = []
@@ -767,9 +768,9 @@ class Pipeline:
         self.heart_rate_buffer = []  # Also clear the heart rate buffer
         
         collected = gc.collect()
-        print(f"Garbage collector collected {collected} objects")
+        print(f"[Pipeline] Garbage collector collected {collected} objects")
 
-        print("Pipeline resources cleared")
+        print("[Pipeline] Pipeline resources cleared")
 
 
 def main():
