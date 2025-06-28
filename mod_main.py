@@ -300,27 +300,34 @@ class BluetoothHandler:
             import traceback
             traceback.print_exc()
         
-        # 在停止后尝试上传数据
+        # 在停止后尝试上传数据和处理待上传的文件夹
         if current_session_dir:
             print(f"[BluetoothHandler] Starting upload process for session: {current_session_dir}")
             # 在后台线程中执行上传，避免阻塞蓝牙响应
             upload_thread = threading.Thread(
-                target=self._upload_session_data,
+                target=self._upload_session_and_pending,
                 args=(current_session_dir,),
                 daemon=True,
                 name="UploadThread"
             )
             upload_thread.start()
         else:
-            print(f"[BluetoothHandler] No current session directory found for upload")
+            # 即使没有当前会话，也检查是否有待上传的文件夹
+            print(f"[BluetoothHandler] No current session, checking for pending uploads")
+            upload_thread = threading.Thread(
+                target=self._upload_pending_only,
+                daemon=True,
+                name="UploadPendingThread"
+            )
+            upload_thread.start()
         
         # 重置当前会话跟踪
         self.current_upload_session = None
         
         return "success"
     
-    def _upload_session_data(self, session_dir):
-        """在后台线程中上传会话数据"""
+    def _upload_session_and_pending(self, session_dir):
+        """上传当前会话数据和所有待上传的文件夹"""
         try:
             print(f"[Upload] Starting upload process for: {session_dir}")
             
@@ -332,12 +339,6 @@ class BluetoothHandler:
                 print(f"[Upload] Session directory does not exist: {session_dir}")
                 return
             
-            # 检查是否已经上传过
-            upload_marker = os.path.join(session_dir, ".uploaded")
-            if os.path.exists(upload_marker):
-                print(f"[Upload] Session already uploaded: {session_dir}")
-                return
-            
             # 列出会话目录中的文件用于调试
             try:
                 files_in_session = os.listdir(session_dir)
@@ -345,16 +346,50 @@ class BluetoothHandler:
             except Exception as e:
                 print(f"[Upload] Error listing session files: {e}")
             
-            # 尝试上传
-            print(f"[Upload] Attempting to upload session data...")
-            success = self.server_uploader.upload_patient_data(session_dir)
-            if success:
-                print(f"[Upload] Successfully uploaded session: {session_dir}")
+            # 首先尝试上传当前会话数据
+            print(f"[Upload] Attempting to upload current session data...")
+            current_success = self.server_uploader.upload_patient_data(session_dir)
+            if current_success:
+                print(f"[Upload] Successfully uploaded current session: {session_dir}")
             else:
-                print(f"[Upload] Failed to upload session: {session_dir}")
+                print(f"[Upload] Failed to upload current session (marked as pending): {session_dir}")
+            
+            # 然后尝试上传所有待上传的文件夹
+            print(f"[Upload] Checking for pending uploads...")
+            base_data_dir = self.session_manager.base_data_dir
+            batch_success, success_count, failed_count = self.server_uploader.upload_all_pending(base_data_dir)
+            
+            if success_count > 0:
+                print(f"[Upload] Successfully uploaded {success_count} pending folders")
+            if failed_count > 0:
+                print(f"[Upload] Failed to upload {failed_count} pending folders")
+            
+            # 总结上传结果
+            total_attempted = 1 + success_count + failed_count  # 当前会话 + 待上传文件夹
+            total_successful = (1 if current_success else 0) + success_count
+            print(f"[Upload] Upload summary: {total_successful}/{total_attempted} folders uploaded successfully")
                 
         except Exception as e:
             print(f"[Upload] Error during upload: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _upload_pending_only(self):
+        """只上传待上传的文件夹"""
+        try:
+            print(f"[Upload] Checking for pending uploads only...")
+            base_data_dir = self.session_manager.base_data_dir
+            batch_success, success_count, failed_count = self.server_uploader.upload_all_pending(base_data_dir)
+            
+            if success_count > 0:
+                print(f"[Upload] Successfully uploaded {success_count} pending folders")
+            if failed_count > 0:
+                print(f"[Upload] Failed to upload {failed_count} pending folders")
+            elif success_count == 0:
+                print(f"[Upload] No pending uploads found")
+                
+        except Exception as e:
+            print(f"[Upload] Error during pending upload check: {e}")
             import traceback
             traceback.print_exc()
 
@@ -507,6 +542,10 @@ class Pipeline:
         self.hr = None
         self.csv_file = config["log_path"]
         global_vars.pipeline_running = False
+        self.heart_rate_buffer = []
+        # 添加显示相关属性
+        self.last_display_update = 0
+        self.display_update_interval = 2.0  # 每2秒更新一次显示
 
         # 初始化日志记录器（默认路径，会在启动时更新）
         self.ecglogger = DataLogger({
@@ -656,6 +695,23 @@ class Pipeline:
                 # Get the heart rate from the filtered data
                 heart_rate = get_hr(filtered_data)
                 self.hr = heart_rate
+                
+                # 更新显示 - 添加这部分代码
+                current_time = time.time()
+                if current_time - self.last_display_update >= self.display_update_interval:
+                    self.update_heart_rate_display(heart_rate)
+                    self.last_display_update = current_time
+
+    def update_heart_rate_display(self, heart_rate):
+        """更新心率显示到外设管理器"""
+        try:
+            if self.perip_manager and heart_rate is not None:
+                # 确保心率在合理范围内
+                hr_display = max(30, min(200, int(round(heart_rate))))
+                self.perip_manager.refresh_display(hr_display)
+                print(f"[Pipeline] Heart rate displayed: {hr_display} BPM")
+        except Exception as e:
+            print(f"[Pipeline] Error updating heart rate display: {e}")
 
     def __call__(self, duration: int) -> None:
         if duration >= 0:
@@ -672,6 +728,7 @@ class Pipeline:
     def start(self) -> None:
         self.clear()
         global_vars.pipeline_running = True
+        self.last_display_update = 0
         self.threads = [
             capture_thread := threading.Thread(
                 target=self.capture,
@@ -722,6 +779,12 @@ class Pipeline:
 
     def stop(self) -> None:
         global_vars.pipeline_running = False
+        try:
+            if self.perip_manager:
+                self.perip_manager.refresh_display(0)
+                print("[Pipeline] Display cleared")
+        except Exception as e:
+            print(f"[Pipeline] Error clearing display: {e}")
         time.sleep(1)
         self.filemerger()
         self.normalizer()

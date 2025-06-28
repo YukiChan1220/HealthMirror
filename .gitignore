@@ -6,3 +6,4 @@ all_in_one.spec
 pyinstall.bat
 dist
 build
+data/
