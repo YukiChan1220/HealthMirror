@@ -23,6 +23,7 @@ from log.merge import FileMerger
 from log.normalize import Normalizer
 from display.display import Display
 from peripherals.peripherals import Peripherals
+from peripheralmanager.peripmanager import PeripheralManager
 from network.wifi import WiFiManager
 from network.uploader import ServerUploader
 
@@ -194,8 +195,9 @@ class SessionManager:
 
 
 class BluetoothHandler:
-    def __init__(self, pipeline=None):
+    def __init__(self, pipeline=None, perip_manager=None):
         self.pipeline = pipeline
+        self.perip_manager = perip_manager
         self.bluetooth = Bluetooth()
         self.rx_queue = queue.Queue()
         self.tx_queue = queue.Queue()
@@ -246,22 +248,6 @@ class BluetoothHandler:
             "ack": {
                 "command": command_name,
                 "status": status
-            }
-        })
-
-    def _send_info(self):
-        """Send device information"""
-        # 获取剩余空间（假设总空间为4096MB）
-        total_space = 4096
-        used_space = self.session_manager.get_total_space_used()
-        space_remaining = max(0, total_space - used_space)
-        
-        self.tx_queue.put({
-            "info": {
-                "device_id": self.device_id,
-                "patient_count": self.session_manager.get_total_sessions(),
-                "space_remaining": int(space_remaining),
-                "battery_level": 70  # 这里可以根据实际情况获取电池电量
             }
         })
 
@@ -377,9 +363,55 @@ class BluetoothHandler:
         timestamp = payload.get("time")
         print(f"[Bluetooth] Refresh info at time {timestamp}")
         
-        # Send info after a short delay
+        # Send info after a short delay to allow for data collection
         threading.Timer(0.5, self._send_info).start()
         return "success"
+
+    def _send_info(self):
+        """Send device information with real data from peripherals"""
+        try:
+            # 获取电池电量
+            battery_level = 70  # 默认值
+            if self.perip_manager:
+                try:
+                    battery_level = self.perip_manager.get_battery_level()
+                    if battery_level < 0:  # 如果获取失败，使用默认值
+                        battery_level = 70
+                except Exception as e:
+                    print(f"[Bluetooth] Error getting battery level: {e}")
+                    battery_level = 70
+            
+            # 获取剩余空间（假设总空间为4096MB）
+            total_space = 4096
+            used_space = self.session_manager.get_total_space_used()
+            space_remaining = max(0, total_space - used_space)
+            
+            # 获取已采集病人数量
+            patient_count = self.session_manager.get_total_sessions()
+            
+            info_data = {
+                "info": {
+                    "device_id": self.device_id,
+                    "patient_count": patient_count,
+                    "space_remaining": int(space_remaining),
+                    "battery_level": battery_level
+                }
+            }
+            
+            print(f"[Bluetooth] Sending device info: {info_data}")
+            self.tx_queue.put(info_data)
+            
+        except Exception as e:
+            print(f"[Bluetooth] Error sending device info: {e}")
+            # 发送默认信息以确保通信不中断
+            self.tx_queue.put({
+                "info": {
+                    "device_id": self.device_id,
+                    "patient_count": 0,
+                    "space_remaining": 4096,
+                    "battery_level": 70
+                }
+            })
 
     def _handle_config_wifi(self, payload):
         """Handle config_wifi command"""
@@ -456,7 +488,7 @@ class Pipeline:
         self.ecg = config["ecg"]
         self.interrupt_hotkey = config["interrupt_hotkey"]
         self.log = config["log"]
-        self.display = config["display"]
+        self.perip_manager = config["perip_manager"]
         self.frame_queue = queue.Queue(maxsize=config["max_queue_size"])
         self.ir_frame_queue = queue.Queue(maxsize=config["max_queue_size"])
         self.preprocess_queue = queue.Queue(maxsize=config["max_queue_size"])
@@ -752,12 +784,7 @@ def main():
         "bmd101": {"serial_port": "/dev/ttyS0"},
         "max_queue_size": 512,
     })
-    display = Display({
-        "tm1637": {
-            "data_pin": 9,
-            "clk_pin": 10,
-        }
-    })
+    peripmanager = PeripheralManager("/dev/ttyS2")
     print("Loading Peripherals...Done")
 
     print("Loading Camera...")
@@ -803,7 +830,7 @@ def main():
         "time_limit": time_limit,
         "log_path": log_path,
         "fps": 30,
-        "display": display,
+        "perip_manager": peripmanager,
         "log": True,
     })
     print("Loading Pipeline...Done")
