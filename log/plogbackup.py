@@ -60,22 +60,22 @@ class PictureLogger():
 
         try:
             result = subprocess.run(cmd, cwd=self.image_path, check=True, capture_output=True, text=True)
-            print(result.stdout)
-            print(result.stderr)
+            print(f"[PictureLogger] ffmpeg stdout: {result.stdout}")
+            print(f"[PictureLogger] ffmpeg stderr: {result.stderr}")
         except subprocess.CalledProcessError as e:
-            print(f"Error during ffmpeg execution: {e}")
-            print(f"Command output: {e.output}")
-            print(f"Command error: {e.stderr}")
+            print(f"[PictureLogger] Error during ffmpeg execution: {e}")
+            print(f"[PictureLogger] Command output: {e.output}")
+            print(f"[PictureLogger] Command error: {e.stderr}")
 
         for file_path in glob.glob(os.path.join(self.image_path, "frame_*.png")):
             try:
                 os.remove(file_path)
             except Exception as e:
-                print(f"Error deleting file {file_path}: {e}")
+                print(f"[PictureLogger] Error deleting file {file_path}: {e}")
         os.remove(txt_path)
         self.timestamps.clear()
         self.frame_count = 0
-        print(f"Saved video to {self.video_path}")
+        print(f"[PictureLogger] Saved video to {self.video_path}")
 
     def __call__(self) -> None:
         os.makedirs(self.image_path, exist_ok=True)
@@ -83,13 +83,14 @@ class PictureLogger():
             try:
                 images, timestamps = self.data_queue.get(timeout=0.5)
             except:
+                print("[PictureLogger] Data queue get timeout or error.")
                 continue
             try:
                 for image, timestamp in zip(images, timestamps):
                     self.save_image(self.frame_count, image, timestamp)
                     self.frame_count += 1
             except Exception as e:
-                print(f"Error processing image: {e}")
+                print(f"[PictureLogger] Error processing image: {e}")
                 continue
-        print(f"Saved {self.frame_count} images to {self.image_path}")
+        print(f"[PictureLogger] Saved {self.frame_count} images to {self.image_path}")
         self.save_video()

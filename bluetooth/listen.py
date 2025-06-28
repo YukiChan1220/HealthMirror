@@ -12,9 +12,9 @@ class Bluetooth(BluetoothBase):
         self.serialSPP = SerialSPP("HealthMirror", "/dev/ttyS1", 115200, 115200)
         cmd_failed = self.serialSPP()
         if cmd_failed == 0:
-            print("SPP module initialized successfully.")
+            print("[Bluetooth] SPP module initialized successfully.")
         else:
-            print(f"SPP module initialization failed with {cmd_failed} command(s) failed.")
+            print(f"[Bluetooth] SPP module initialization failed with {cmd_failed} command(s) failed.")
         self.serial = self.serialSPP.serial
         self.transmit_interval = 0.2
     
@@ -31,7 +31,7 @@ class Bluetooth(BluetoothBase):
                         global_vars.bluetooth_interrupt = True
                         print(f"Received data: {json_data}")
                     except json.JSONDecodeError:
-                        print("Failed to decode JSON data")
+                        print("[Bluetooth] Failed to decode JSON data")
 
     def send(self, tx_data: Queue):
         # create a serial sender with json encoding
@@ -42,9 +42,9 @@ class Bluetooth(BluetoothBase):
                 if json_data:
                     try:
                         self.serial.write(json_data.encode('utf-8'))
-                        print(f"Sent data: {json_data}")
+                        print(f"[Bluetooth] Sent data: {json_data}")
                     except Exception as e:
-                        print(f"Failed to send data: {e}")
+                        print(f"[Bluetooth] Failed to send data: {e}")
                 time.sleep(self.transmit_interval)
 
     def encode_json(self, data: dict) -> str:
@@ -53,7 +53,7 @@ class Bluetooth(BluetoothBase):
             json_data = json.dumps(data)
             return json_data + '\r\n'  # Add newline for SPP protocol
         except (TypeError, ValueError) as e:
-            print(f"Failed to encode data to JSON: {e}")
+            print(f"[Bluetooth] Failed to encode data to JSON: {e}")
             return None
 
     def __call__(self, tx_data: Queue, rx_data: Queue):
@@ -70,5 +70,5 @@ class Bluetooth(BluetoothBase):
             thread.start()
 
 
-        
+
 

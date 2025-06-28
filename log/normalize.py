@@ -26,4 +26,4 @@ class Normalizer:
         if self.data is None:
             raise ValueError("No data to save")
         self.data.to_csv(self.outpath, index=False)
-        print(f"Normalized data saved to {self.outpath}")
+        print(f"[Normalizer] Normalized data saved to {self.outpath}")

@@ -17,7 +17,7 @@ class CameraCapture(CaptureBase):
             success, frame = self.cap.read()
             timestamp = time.time()
             if not success:
-                print("[WARN] Unable to read a frame", file=sys.stderr)
+                print("[Camera] Unable to read a frame", file=sys.stderr)
                 continue
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             frame_queue.put((frame, timestamp))
@@ -25,7 +25,7 @@ class CameraCapture(CaptureBase):
             success, ir_frame = self.ir_cap.read()
             timestamp = time.time()
             if not success:
-                print("[WARN] Unable to read an IR frame", file=sys.stderr)
+                print("[Camera] Unable to read an IR frame", file=sys.stderr)
                 continue
             ir_frame = cv2.cvtColor(ir_frame, cv2.COLOR_BGR2RGB) # TODO: color conversion may not be necessary for IR frames
             ir_frame_queue.put((ir_frame, timestamp))

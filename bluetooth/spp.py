@@ -32,10 +32,10 @@ class SerialSPP:
         response = self.serial.read(self.serial.in_waiting).decode('utf-8').strip()
         time.sleep(0.2)  # 等待一段时间以确保数据被接收
         if response.endswith('OK'):
-            print(f"Command successful: {command}, Response: {response}")
+            print(f"[Bluetooth] Command successful: {command}, Response: {response}")
             return 0
         else:
-            print(f"Command failed: {command}, Response: {response}")
+            print(f"[Bluetooth] Command failed: {command}, Response: {response}")
             return -1
         
 

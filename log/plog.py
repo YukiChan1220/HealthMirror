@@ -36,7 +36,7 @@ class PictureLogger():
     def save_video(self) -> None:
         # 检查是否有帧需要保存
         if self.frame_count == 0:
-            print("No frames to save, skipping video creation")
+            print("[PictureLogger] No frames to save, skipping video creation")
             return
             
         txt_path = os.path.join(self.image_path, "timestamps.txt")
@@ -45,7 +45,7 @@ class PictureLogger():
         video_dir = os.path.dirname(self.video_path)
         if video_dir and not os.path.exists(video_dir):
             os.makedirs(video_dir, exist_ok=True)
-            print(f"Created video directory: {video_dir}")
+            print(f"[PictureLogger] Created video directory: {video_dir}")
         
         with open(txt_path, "w") as f:
             for i in range(self.frame_count - 1):
@@ -78,31 +78,31 @@ class PictureLogger():
             "test.mp4"
         ]
 
-        print(f"Attempting to create video at: {abs_video_path}")
-        print(f"Working directory: {self.image_path}")
-        print(f"Frame count: {self.frame_count}")
+        print(f"[PictureLogger] Attempting to create video at: {abs_video_path}")
+        print(f"[PictureLogger] Working directory: {self.image_path}")
+        print(f"[PictureLogger] Frame count: {self.frame_count}")
 
         try:
             # 检查 timestamps.txt 文件是否存在
             if not os.path.exists(txt_path):
-                print(f"Error: timestamps.txt not found at {txt_path}")
+                print(f"[PictureLogger] Error: timestamps.txt not found at {txt_path}")
                 return
                 
             result = subprocess.run(cmd, cwd=self.image_path, check=True, capture_output=True, text=True)
-            print("FFmpeg stdout:", result.stdout)
+            print("[PictureLogger] FFmpeg stdout:", result.stdout)
             if result.stderr:
-                print("FFmpeg stderr:", result.stderr)
+                print("[PictureLogger] FFmpeg stderr:", result.stderr)
                 
         except subprocess.CalledProcessError as e:
-            print(f"Error during ffmpeg execution: {e}")
-            print(f"Return code: {e.returncode}")
+            print(f"[PictureLogger] Error during ffmpeg execution: {e}")
+            print(f"[PictureLogger] Return code: {e.returncode}")
             if e.stdout:
-                print(f"Command output: {e.stdout}")
+                print(f"[PictureLogger] Command output: {e.stdout}")
             if e.stderr:
-                print(f"Command error: {e.stderr}")
+                print(f"[PictureLogger] Command error: {e.stderr}")
             
             # 尝试备用方法
-            print("Trying alternative ffmpeg command...")
+            print("[PictureLogger] Trying alternative ffmpeg command...")
             try:
                 backup_cmd = [
                     "ffmpeg",
@@ -114,9 +114,9 @@ class PictureLogger():
                     abs_video_path
                 ]
                 result = subprocess.run(backup_cmd, cwd=self.image_path, check=True, capture_output=True, text=True)
-                print("Backup FFmpeg command succeeded")
+                print("[PictureLogger] Backup FFmpeg command succeeded")
             except subprocess.CalledProcessError as e2:
-                print(f"Backup command also failed: {e2}")
+                print(f"[PictureLogger] Backup command also failed: {e2}")
                 return
 
         # 清理文件
@@ -125,17 +125,17 @@ class PictureLogger():
                 try:
                     os.remove(file_path)
                 except Exception as e:
-                    print(f"Error deleting file {file_path}: {e}")
+                    print(f"[PictureLogger] Error deleting file {file_path}: {e}")
             
             if os.path.exists(txt_path):
                 os.remove(txt_path)
                 
             self.timestamps.clear()
             self.frame_count = 0
-            print(f"Successfully saved video to {abs_video_path}")
+            print(f"[PictureLogger] Successfully saved video to {abs_video_path}")
             
         except Exception as e:
-            print(f"Error during cleanup: {e}")
+            print(f"[PictureLogger] Error during cleanup: {e}")
 
     def __call__(self) -> None:
         # 确保目录在开始时就存在
@@ -154,11 +154,11 @@ class PictureLogger():
                     self.save_image(self.frame_count, image, timestamp)
                     self.frame_count += 1
             except Exception as e:
-                print(f"Error processing image: {e}")
+                print(f"[PictureLogger] Error processing image: {e}")
                 continue
                 
-        print(f"Saved {self.frame_count} images to {self.image_path}")
+        print(f"[PictureLogger] Saved {self.frame_count} images to {self.image_path}")
         if self.frame_count > 0:
             self.save_video()
         else:
-            print("No frames captured, skipping video creation")
+            print("[PictureLogger] No frames captured, skipping video creation")

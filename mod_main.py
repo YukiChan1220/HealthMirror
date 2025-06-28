@@ -54,7 +54,7 @@ class SessionManager:
         self.current_session_dir = None
         self.current_patient_id = None
         self.patient_info = None
-        print("Session state reset")
+        print("[SessionManager] Session state reset")
         
     def _get_next_patient_id(self):
         """获取下一个病人ID"""
@@ -77,7 +77,7 @@ class SessionManager:
             return next_id
             
         except Exception as e:
-            print(f"Error getting next patient ID: {e}")
+            print(f"[SessionManager] Error getting next patient ID: {e}")
             # 如果出错，从现有目录扫描
             return self._scan_existing_patient_dirs() + 1
     
@@ -96,7 +96,7 @@ class SessionManager:
                         except ValueError:
                             continue
         except Exception as e:
-            print(f"Error scanning existing patient directories: {e}")
+            print(f"[SessionManager] Error scanning existing patient directories: {e}")
         
         return max_id
         
@@ -126,7 +126,7 @@ class SessionManager:
         if patient_info:
             self._save_patient_info(patient_info, timestamp)
         
-        print(f"Created new session: {session_dir}")
+        print(f"[SessionManager] Created new session: {session_dir}")
         return session_dir
     
     def _save_patient_info(self, patient_info, timestamp):
@@ -230,7 +230,7 @@ class BluetoothHandler:
             name="BluetoothHandlerThread"
         )
         self.handler_thread.start()
-        print("Bluetooth handler started")
+        print("[BluetoothHandler] Bluetooth handler started")
 
     def stop(self):
         """Stop the bluetooth service"""
@@ -240,7 +240,7 @@ class BluetoothHandler:
         if self.handler_thread:
             self.handler_thread.join(timeout=2)
         
-        print("Bluetooth handler stopped")
+        print("[BluetoothHandler] Bluetooth handler stopped")
 
     def _send_ack(self, command_name, status="success"):
         """Send acknowledgment message"""
@@ -253,14 +253,14 @@ class BluetoothHandler:
 
     def _handle_set_time(self, payload):
         """Handle set_time command"""
-        print(f"[Bluetooth] Set time: {payload.get('time')}")
+        print(f"[BluetoothHandler] Set time: {payload.get('time')}")
         return "success"
 
     def _handle_start_capture(self, payload):
         """Handle start_capture command"""
         patient_info = payload.get("patient_info")
         timestamp = payload.get("time")
-        print(f"[Bluetooth] Start capture: patient={patient_info}, time={timestamp}")
+        print(f"[BluetoothHandler] Start capture: patient={patient_info}, time={timestamp}")
         
         try:
             # 重置当前会话跟踪
@@ -271,7 +271,7 @@ class BluetoothHandler:
             
             # 更新当前会话跟踪
             self.current_upload_session = session_dir
-            print(f"[Bluetooth] Current upload session set to: {session_dir}")
+            print(f"[BluetoothHandler] Current upload session set to: {session_dir}")
             
             if self.pipeline:
                 # 更新pipeline的文件路径
@@ -280,29 +280,29 @@ class BluetoothHandler:
             
             return "success"
         except Exception as e:
-            print(f"[Bluetooth] Error starting capture: {e}")
+            print(f"[BluetoothHandler] Error starting capture: {e}")
             return "failure"
 
     def _handle_stop_capture(self, payload):
         """Handle stop_capture command"""
         timestamp = payload.get("time")
-        print(f"[Bluetooth] Stop capture at time {timestamp}")
+        print(f"[BluetoothHandler] Stop capture at time {timestamp}")
         
         # 获取当前会话目录
         current_session_dir = self.current_upload_session or self.session_manager.get_current_session_dir()
-        print(f"[Bluetooth] Current session directory for upload: {current_session_dir}")
+        print(f"[BluetoothHandler] Current session directory for upload: {current_session_dir}")
         
         try:
             if self.pipeline:
                 self.pipeline.stop()
         except Exception as e:
-            print(f"[Bluetooth] Error stopping pipeline: {e}")
+            print(f"[BluetoothHandler] Error stopping pipeline: {e}")
             import traceback
             traceback.print_exc()
         
         # 在停止后尝试上传数据
         if current_session_dir:
-            print(f"[Bluetooth] Starting upload process for session: {current_session_dir}")
+            print(f"[BluetoothHandler] Starting upload process for session: {current_session_dir}")
             # 在后台线程中执行上传，避免阻塞蓝牙响应
             upload_thread = threading.Thread(
                 target=self._upload_session_data,
@@ -312,7 +312,7 @@ class BluetoothHandler:
             )
             upload_thread.start()
         else:
-            print(f"[Bluetooth] No current session directory found for upload")
+            print(f"[BluetoothHandler] No current session directory found for upload")
         
         # 重置当前会话跟踪
         self.current_upload_session = None
@@ -361,7 +361,7 @@ class BluetoothHandler:
     def _handle_refresh_info(self, payload):
         """Handle refresh_info command"""
         timestamp = payload.get("time")
-        print(f"[Bluetooth] Refresh info at time {timestamp}")
+        print(f"[BluetoothHandler] Refresh info at time {timestamp}")
         
         # Send info after a short delay to allow for data collection
         threading.Timer(0.5, self._send_info).start()
@@ -378,7 +378,7 @@ class BluetoothHandler:
                     if battery_level < 0:  # 如果获取失败，使用默认值
                         battery_level = 70
                 except Exception as e:
-                    print(f"[Bluetooth] Error getting battery level: {e}")
+                    print(f"[BluetoothHandler] Error getting battery level: {e}")
                     battery_level = 70
             
             # 获取剩余空间（假设总空间为4096MB）
@@ -398,11 +398,11 @@ class BluetoothHandler:
                 }
             }
             
-            print(f"[Bluetooth] Sending device info: {info_data}")
+            print(f"[BluetoothHandler] Sending device info: {info_data}")
             self.tx_queue.put(info_data)
             
         except Exception as e:
-            print(f"[Bluetooth] Error sending device info: {e}")
+            print(f"[BluetoothHandler] Error sending device info: {e}")
             # 发送默认信息以确保通信不中断
             self.tx_queue.put({
                 "info": {
@@ -421,16 +421,16 @@ class BluetoothHandler:
         password = payload.get("password", "")
         timestamp = payload.get("time")
         
-        print(f"[Bluetooth] Config WiFi: ssid={ssid}, auth={auth}, user={username}, time={timestamp}")
+        print(f"[BluetoothHandler] Config WiFi: ssid={ssid}, auth={auth}, user={username}, time={timestamp}")
         
         # Use WiFiManager to handle the connection
         result = self.wifi_manager.connect(ssid, auth, username, password)
         
         if result["status"] == "success":
-            print(f"[WiFi] {result['message']}")
+            print(f"[WiFiManager] {result['message']}")
             return "success"
         else:
-            print(f"[WiFi] {result['message']}")
+            print(f"[WiFiManager] {result['message']}")
             return "failure"
 
     def _handle_commands(self):
@@ -447,7 +447,7 @@ class BluetoothHandler:
             try:
                 msg = self.rx_queue.get(timeout=1)
                 if not isinstance(msg, dict):
-                    print(f"[Bluetooth Handler] Ignoring invalid message: {msg}")
+                    print(f"[BluetoothHandler] Ignoring invalid message: {msg}")
                     continue
 
                 command_name = next(iter(msg))
@@ -458,16 +458,16 @@ class BluetoothHandler:
                         status = command_handlers[command_name](payload)
                         self._send_ack(command_name, status)
                     except Exception as e:
-                        print(f"[Bluetooth Handler] Error handling {command_name}: {e}")
+                        print(f"[BluetoothHandler] Error handling {command_name}: {e}")
                         self._send_ack(command_name, "error")
                 else:
-                    print(f"[Bluetooth] Unknown command: {command_name}")
+                    print(f"[BluetoothHandler] Unknown command: {command_name}")
                     self._send_ack(command_name, "unknown")
 
             except queue.Empty:
                 continue
             except Exception as e:
-                print(f"[Bluetooth Handler] Exception: {e}")
+                print(f"[BluetoothHandler] Exception: {e}")
 
     def set_pipeline(self, pipeline):
         """Set the pipeline reference"""
@@ -777,29 +777,29 @@ def main():
     rgb_cam = '/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._RGB_CAMERA_SN0008-video-index0'
     ir_cam = '/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB_2.0_Camera_SN0001-video-index0'
 
-    print("RGB Camera:", rgb_cam)
-    print("IR Camera", ir_cam)
-    print("Model Choice:", model_choice)
-    print("Log Path:", log_path)
-    print("Time Limit:", time_limit)
+    print("[Main] RGB Camera:", rgb_cam)
+    print("[Main] IR Camera", ir_cam)
+    print("[Main] Model Choice:", model_choice)
+    print("[Main] Log Path:", log_path)
+    print("[Main] Time Limit:", time_limit)
 
-    print("Loading Peripherals...")
+    print("[Main] Loading Peripherals...")
     peripherals = Peripherals()
     ecg = ECG({
         "bmd101": {"serial_port": "/dev/ttyS0"},
         "max_queue_size": 512,
     })
     peripmanager = PeripheralManager("/dev/ttyS3")
-    print("Loading Peripherals...Done")
+    print("[Main] Loading Peripherals...Done")
 
-    print("Loading Camera...")
+    print("[Main] Loading Camera...")
     cap = cv2.VideoCapture(rgb_cam)
     ir_cap = cv2.VideoCapture(ir_cam)
     capture = CameraCapture(cap, ir_cap)
-    print("Loading Camera...Done")
+    print("[Main] Loading Camera...Done")
     target_size = 36 if model_choice == "Step" else 32
     batch_size = 1 if model_choice == "Step" else 128
-    print("Loading MediaPipe...")
+    print("[Main] Loading MediaPipe...")
     preprocess = MediaPipePreprocess({
         "target_size": (target_size, target_size),
         "mesh_display": False,
@@ -809,7 +809,7 @@ def main():
         "mesh_display": False,
     })
     
-    print("Loading MediaPipe...Done")
+    print("[Main] Loading MediaPipe...Done")
     if model_choice == "Step":
         model = Step(
             model_path="./model/models/onnx/step.onnx",
@@ -820,8 +820,8 @@ def main():
         model = PhysNet(
             model_path="./model/models/onnx/physnet.onnx"
         )
-    print("Loading Model...Done")
-    print("Loading Pipeline...")
+    print("[Main] Loading Model...Done")
+    print("[Main] Loading Pipeline...")
     pipeline = Pipeline({
         "capture": capture,
         "preprocess": preprocess,
@@ -838,26 +838,26 @@ def main():
         "perip_manager": peripmanager,
         "log": True,
     })
-    print("Loading Pipeline...Done")
+    print("[Main] Loading Pipeline...Done")
 
-    print("Loading Bluetooth...")
+    print("[Main] Loading Bluetooth...")
     bluetooth_handler = BluetoothHandler(pipeline, peripmanager)
     bluetooth_handler.start()
-    print("Loading Bluetooth...Done")
+    print("[Main] Loading Bluetooth...Done")
 
-    print("System is now waiting for Bluetooth commands (start_capture / stop_capture)...")
+    print("[Main] System is now waiting for Bluetooth commands (start_capture / stop_capture)...")
     try:
         while True:
             if global_vars.pipeline_running:
                 if pipeline.inference_results:
-                    print("Latest Inference Results:", pipeline.inference_results[-5:])
+                    print("[Main] Latest Inference Results:", pipeline.inference_results[-5:])
                 else:
-                    print("No inference results yet.")
+                    print("[Main] No inference results yet.")
             time.sleep(1)
     except KeyboardInterrupt:
-        print("Shutting down...")
+        print("[Main] Shutting down...")
 
-    print("Releasing resources...")
+    print("[Main] Releasing resources...")
     bluetooth_handler.stop()
     cap.release()
 
