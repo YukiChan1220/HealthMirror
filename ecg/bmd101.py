@@ -93,10 +93,16 @@ class BMD101:
                             if i < len(payload_data):
                                 v_length = payload_data[i]
                                 i += 1
-                                raw_data = payload_data[i] * 256 + payload_data[i + 1]
-                                if(raw_data>32768):
-                                    raw_data = raw_data - 65536
-                                i += 1
+                                raw_data = 0
+                                # Use little-endian parsing
+                                for j in range(v_length):
+                                    if i + v_length - j - 1 < len(payload_data):
+                                        raw_data = raw_data | (payload_data[i + v_length - j - 1] << (8 * j))
+
+                                if raw_data >= 32768:  # 0x8000
+                                    raw_data = raw_data - 65536  # Convert to negative
+                                    
+                                i += v_length - 1  # Adjust index
                                 continue
                         i += 1
 
