@@ -8,7 +8,7 @@ class ServerUploader:
     def __init__(self, server_config=None):
         # 默认服务器配置
         self.server_config = server_config or {
-            "host": "183.173.178.22",  # 替换为实际服务器IP
+            "host": "183.173.176.1",  # 替换为实际服务器IP
             "port": 22,
             "username": "ssh_user",  # 替换为实际用户名
             "password": "thu_ssh_opi_test",  # 替换为实际密码
