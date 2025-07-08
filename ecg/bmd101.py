@@ -15,21 +15,15 @@ class BMD101:
                 parity=serial.PARITY_NONE,
                 stopbits=serial.STOPBITS_ONE
             )
-            self.serial_port.flushInput()
-            self.serial_port.reset_input_buffer()
+            self.flush_buffer()
             
             
         except Exception as e:
             print("Serial unavailable {}: {}".format(serial_port, e))
             return
-
-    # read data from serial
-    def _read_one_byte(self):
-        # 添加超时机制，避免无限阻塞
-        data = self.serial_port.read(1)
-        if data:
-            return data[0]
-        return None  # 超时返回None
+        
+    def flush_buffer(self):
+        self.serial_port.reset_input_buffer()
 
     def read_data(self):
         """
@@ -41,39 +35,41 @@ class BMD101:
           - timestamp: 数据实际读取完成的时间戳
         """
         # with self.lock:
+        # self.serial_port.reset_input_buffer()
         start_time = time.time()
         payload_data = []
 
         # wait for sync bytes 0xAA, 0xAA
-        byte1 = self._read_one_byte()
+        byte1 = self.serial_port.read(1)
         if byte1 is None or byte1 != 0xAA:
             return -1, None, None, None
             
-        byte2 = self._read_one_byte()
+        byte2 = self.serial_port.read(1)
         if byte2 is None or byte2 != 0xAA:
             return -1, None, None, None
             
         # read payloadLength, continue if 0xAA
-        payload_length = self._read_one_byte()
+        payload_length = self.serial_port.read(1)
         while payload_length == 0xAA:
-            payload_length = self._read_one_byte()
+            payload_length = self.serial_port.read(1)
 
         if payload_length > 169:
             # illegal
+            print(f"[BMD101] Illegal payload length: {payload_length}")
             return -1, None, None, None
 
         generated_checksum = 0
-        # read payload data
         for i in range(payload_length):
-            b = self._read_one_byte()
+            b = self.serial_port.read(1)
             payload_data.append(b)
             generated_checksum += b
 
-        checksum = self._read_one_byte()
+        checksum = self.serial_port.read(1)
         generated_checksum = (255 - (generated_checksum & 0xFF)) & 0xFF
 
         if checksum != generated_checksum:
             # check
+            print(f"[BMD101] Checksum mismatch: expected {generated_checksum}, received {checksum}")
             return -1, None, None, None
 
         # unpack payload

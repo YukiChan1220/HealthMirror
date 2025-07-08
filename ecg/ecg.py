@@ -15,13 +15,12 @@ class ECG(ECGBase):
             return [timestamp, raw_data]
         return None
 
-            
-
     def filter_data(self, raw_ecg_queue: Queue, filtered_ecg_queue) -> None:
         # TODO: Implement filtering logic
         pass
 
     def __call__(self, raw_ecg_queue: Queue, monitor_ecg_queue: Queue) -> None:
+        # self.bmd101.flush_buffer()
         while global_vars.pipeline_running:
             ecg_data = self.read_bmd101()
             if ecg_data is not None:
