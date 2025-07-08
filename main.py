@@ -533,7 +533,7 @@ class Pipeline:
         self.ir_log_queue = queue.Queue(maxsize=config["max_queue_size"])
         self.raw_ecg_queue = queue.Queue(maxsize=config["max_queue_size"])
         self.display_queue = queue.Queue(maxsize=config["max_queue_size"])
-        self.filtered_ecg_queue = queue.Queue(maxsize=config["max_queue_size"])
+        self.monitor_ecg_queue = queue.Queue(maxsize=config["max_queue_size"])
         self.inference_results = []
         self.max_display_points = config["max_display_points"]
         self.time_limit = config["time_limit"]
@@ -545,6 +545,19 @@ class Pipeline:
         # 添加显示相关属性
         self.last_display_update = 0
         self.display_update_interval = 2.0  # 每2秒更新一次显示
+        
+        # 添加ECG质量监测相关属性
+        self.ecg_buffer = []
+        self.ecg_window_size = config.get("ecg_window_size", 512)  # 1 sec
+        self.ecg_quality = "normal"  # 初始质量状态
+        self.ecg_quality_thresholds = {
+            "normal": 6000,    # 极差小于5000为正常
+            "warning": 8000,   # 极差5000-8000为警告
+            # 极差大于8000为错误
+        }
+        # 在Pipeline.__init__方法中添加这些属性
+        self.last_ecg_quality_display = 0
+        self.ecg_quality_display_interval = 1.0  # 每秒显示一次ECG质量信息
 
         # 初始化日志记录器（默认路径，会在启动时更新）
         self.ecglogger = DataLogger({
@@ -618,7 +631,7 @@ class Pipeline:
         })
         
         self.filemerger = FileMerger(
-            input_files=[session_paths["ecg_log"], session_paths["rppg_log"]], 
+            input_files=[session_paths["rppg_log"], session_paths["ecg_log"]], 
             output_path=session_paths["merged_log"]
         )
 
@@ -666,6 +679,10 @@ class Pipeline:
             except:
                 print("[Pipeline] No results in the queue, waiting...")
                 continue
+            
+            # 处理ECG质量监测
+            self._process_ecg_quality()
+            
             self.log_result_queue.put(result)
             
             # result格式是[timestamp, inference_result]
@@ -680,12 +697,12 @@ class Pipeline:
                     self.inference_results.pop(0)
                 
                 # 使用推理结果作为心率数据
-                new_heart_rate = inference_result  # 使用推理结果而不是result[0]
+                new_heart_rate = inference_result
                 self.heart_rate_buffer.append(new_heart_rate)
             
             # Ensure we only keep enough data for 10 seconds (e.g., 300 data points if fps = 30)
             if len(self.heart_rate_buffer) > self.config["fps"] * 6:
-                self.heart_rate_buffer.pop(0)  # Remove the oldest value
+                self.heart_rate_buffer.pop(0)
 
             # Calculate heart rate when there is enough data (10 seconds worth)
             if len(self.heart_rate_buffer) >= self.config["fps"] * 6:
@@ -695,11 +712,62 @@ class Pipeline:
                 heart_rate = get_hr(filtered_data)
                 self.hr = heart_rate
                 
-                # 更新显示 - 添加这部分代码
+                # 更新显示
                 current_time = time.time()
                 if current_time - self.last_display_update >= self.display_update_interval:
                     self.update_heart_rate_display(heart_rate)
                     self.last_display_update = current_time
+                
+                # 控制ECG质量信息的显示频率
+                if current_time - self.last_ecg_quality_display >= self.ecg_quality_display_interval:
+                    print(f"[Pipeline] Heart Rate: {heart_rate:.1f} BPM, ECG Quality: {self.ecg_quality}")
+                    self.last_ecg_quality_display = current_time
+
+    def _process_ecg_quality(self):
+        """处理ECG数据质量监测"""
+        try:
+            # 从monitor_ecg_queue获取ECG数据
+            while not self.monitor_ecg_queue.empty():
+                try:
+                    ecg_data = self.monitor_ecg_queue.get_nowait()
+                    # ecg_data可能是单个值或包含时间戳的列表
+                    if isinstance(ecg_data, (list, tuple)) and len(ecg_data) > 1:
+                        ecg_value = ecg_data[1]  # 假设格式为[timestamp, value]
+                    else:
+                        ecg_value = float(ecg_data)
+                    
+                    self.ecg_buffer.append(ecg_value)
+                    
+                    # 保持窗口大小
+                    if len(self.ecg_buffer) > self.ecg_window_size:
+                        self.ecg_buffer.pop(0)
+                        
+                except queue.Empty:
+                    break
+                except (ValueError, TypeError, IndexError) as e:
+                    print(f"[Pipeline] Error processing ECG data: {e}")
+                    continue
+            
+            # 当有足够数据时计算质量
+            if len(self.ecg_buffer) >= self.ecg_window_size:
+                ecg_array = np.array(self.ecg_buffer)
+                ecg_range = np.max(ecg_array) - np.min(ecg_array)  # 计算极差
+                
+                # 根据极差判断质量
+                if ecg_range <= self.ecg_quality_thresholds["normal"]:
+                    self.ecg_quality = "normal"
+                elif ecg_range <= self.ecg_quality_thresholds["warning"]:
+                    self.ecg_quality = "warning"
+                else:
+                    self.ecg_quality = "error"
+                
+                # 可选：输出调试信息
+                if self.log:
+                    print(f"[Pipeline] ECG Range: {ecg_range:.1f}, Quality: {self.ecg_quality}")
+                    
+        except Exception as e:
+            print(f"[Pipeline] Error in ECG quality processing: {e}")
+            self.ecg_quality = "error"  # 处理错误时设为error状态
 
     def update_heart_rate_display(self, heart_rate):
         """更新心率显示到外设管理器"""
@@ -761,7 +829,7 @@ class Pipeline:
             ),
             ecg_thread := threading.Thread(
                 target=self.ecg,
-                args=(self.raw_ecg_queue, self.filtered_ecg_queue),
+                args=(self.raw_ecg_queue, self.monitor_ecg_queue),
                 daemon=True,
                 name="ECGThread",
             ),
@@ -810,7 +878,7 @@ class Pipeline:
             "log_result_queue": self.log_result_queue,
             "raw_ecg_queue": self.raw_ecg_queue,
             "display_queue": self.display_queue,
-            "filtered_ecg_queue": self.filtered_ecg_queue
+            "monitor_ecg_queue": self.monitor_ecg_queue
         }
         
         # Clear all queues safely
@@ -828,6 +896,11 @@ class Pipeline:
         self.inference_results = []
         self.hr = None
         self.heart_rate_buffer = []  # Also clear the heart rate buffer
+        self.ecg_buffer = []  # 清空ECG缓冲区
+        self.ecg_quality = "normal"  # 重置ECG质量状态
+
+        self.last_display_update = 0
+        self.last_ecg_quality_display = 0
         
         collected = gc.collect()
         print(f"[Pipeline] Garbage collector collected {collected} objects")
