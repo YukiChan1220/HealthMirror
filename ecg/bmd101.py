@@ -35,41 +35,43 @@ class BMD101:
           - timestamp: 数据实际读取完成的时间戳
         """
         # with self.lock:
-        # self.serial_port.reset_input_buffer()
+        self.serial_port.reset_input_buffer()
         start_time = time.time()
         payload_data = []
 
         # wait for sync bytes 0xAA, 0xAA
-        byte1 = self.serial_port.read(1)
+        byte1 = self.serial_port.read(1)[0]
         if byte1 is None or byte1 != 0xAA:
             return -1, None, None, None
             
-        byte2 = self.serial_port.read(1)
+        byte2 = self.serial_port.read(1)[0]
         if byte2 is None or byte2 != 0xAA:
             return -1, None, None, None
             
         # read payloadLength, continue if 0xAA
-        payload_length = self.serial_port.read(1)
+        payload_length = self.serial_port.read(1)[0]
         while payload_length == 0xAA:
-            payload_length = self.serial_port.read(1)
+            payload_length = self.serial_port.read(1)[0]
 
         if payload_length > 169:
             # illegal
-            print(f"[BMD101] Illegal payload length: {payload_length}")
             return -1, None, None, None
 
         generated_checksum = 0
-        for i in range(payload_length):
-            b = self.serial_port.read(1)
-            payload_data.append(b)
+        # read payload data
+        payload_data = self.serial_port.read(payload_length)
+        if len(payload_data) != payload_length:
+            # not enough data
+            print(f"[BMD101] Expected {payload_length} bytes, received {len(payload_data)} bytes")
+            return -1, None, None, None
+        for b in payload_data:
             generated_checksum += b
 
-        checksum = self.serial_port.read(1)
+        checksum = self.serial_port.read(1)[0]
         generated_checksum = (255 - (generated_checksum & 0xFF)) & 0xFF
 
         if checksum != generated_checksum:
             # check
-            print(f"[BMD101] Checksum mismatch: expected {generated_checksum}, received {checksum}")
             return -1, None, None, None
 
         # unpack payload
@@ -118,4 +120,3 @@ class BMD101:
             return -1, heart_rate, raw_data, None
         else:
             return 0, heart_rate, raw_data, end_time
-

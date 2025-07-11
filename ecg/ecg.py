@@ -20,7 +20,7 @@ class ECG(ECGBase):
         pass
 
     def __call__(self, raw_ecg_queue: Queue, monitor_ecg_queue: Queue) -> None:
-        # self.bmd101.flush_buffer()
+        self.bmd101.flush_buffer()
         while global_vars.pipeline_running:
             ecg_data = self.read_bmd101()
             if ecg_data is not None:

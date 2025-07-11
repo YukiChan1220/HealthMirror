@@ -544,7 +544,7 @@ class Pipeline:
         self.heart_rate_buffer = []
         # 添加显示相关属性
         self.last_display_update = 0
-        self.display_update_interval = 2.0  # 每2秒更新一次显示
+        self.display_update_interval = 1.0  # 每1秒更新一次显示
         
         # 添加ECG质量监测相关属性
         self.ecg_buffer = []
