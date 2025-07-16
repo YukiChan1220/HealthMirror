@@ -479,7 +479,7 @@ class BluetoothHandler:
 
         while self.running:
             try:
-                msg = self.rx_queue.get(timeout=1)
+                msg = self.rx_queue.get(timeout=0.5)  # 减少超时时间，提高响应性
                 if not isinstance(msg, dict):
                     print(f"[BluetoothHandler] Ignoring invalid message: {msg}")
                     continue
@@ -499,9 +499,12 @@ class BluetoothHandler:
                     self._send_ack(command_name, "unknown")
 
             except queue.Empty:
+                # 队列为空时短暂休眠，减少CPU占用
+                time.sleep(0.01)
                 continue
             except Exception as e:
                 print(f"[BluetoothHandler] Exception: {e}")
+                time.sleep(0.1)
 
     def set_pipeline(self, pipeline):
         """Set the pipeline reference"""
@@ -667,17 +670,28 @@ class Pipeline:
         while global_vars.pipeline_running:
             try:
                 results, timestamps = result_queue.get(timeout=0.5)
-            except:
+                for result, timestamp in zip(results, timestamps):
+                    main_queue.put([timestamp, result])
+            except queue.Empty:
+                # 队列为空时短暂休眠，减少CPU占用
+                time.sleep(0.01)
                 continue
-            for result, timestamp in zip(results, timestamps):
-                main_queue.put([timestamp, result])
+            except Exception as e:
+                print(f"[Pipeline] Error in exchange_data: {e}")
+                time.sleep(0.1)
 
     def results(self) -> None:
         while global_vars.pipeline_running:
             try:
                 result = self.main_queue.get(timeout=0.5)
-            except:
-                print("[Pipeline] No results in the queue, waiting...")
+            except queue.Empty:
+                # 队列为空时短暂休眠，减少CPU占用
+                print("[Pipeline] No results available, waiting...")
+                time.sleep(0.05)
+                continue
+            except Exception as e:
+                print(f"[Pipeline] Error in results processing: {e}")
+                time.sleep(0.1)
                 continue
             
             # 处理ECG质量监测
@@ -982,6 +996,10 @@ def main():
     cap = cv2.VideoCapture(rgb_cam)
     ir_cap = cv2.VideoCapture(ir_cam)
     capture = CameraCapture(cap, ir_cap)
+    
+    # 设置摄像头路径，用于重新初始化
+    capture.set_camera_paths(rgb_cam, ir_cam)
+    
     print("[Main] Loading Camera...Done")
     target_size = 36 if model_choice == "Step" else 32
     batch_size = 1 if model_choice == "Step" else 128

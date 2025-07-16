@@ -15,7 +15,14 @@ class CameraCapture(CaptureBase):
     def __call__(self, frame_queue: Queue, ir_frame_queue: Queue) -> None:
         print("[Camera] Starting camera capture thread")
         
-        # Check if cameras are available
+        # 在每次采集开始时检查并重新初始化摄像头
+        if not self.cap or not self.cap.isOpened() or not self.ir_cap or not self.ir_cap.isOpened():
+            print("[Camera] Cameras not available, attempting to reinitialize...")
+            if not self.reinitialize_cameras():
+                print("[Camera] Failed to reinitialize cameras, aborting capture")
+                return
+        
+        # 再次检查摄像头状态
         if not self.cap or not self.cap.isOpened():
             print("[Camera] RGB camera is not available or not opened")
             return
@@ -23,6 +30,8 @@ class CameraCapture(CaptureBase):
         if not self.ir_cap or not self.ir_cap.isOpened():
             print("[Camera] IR camera is not available or not opened")
             return
+        
+        print("[Camera] Cameras initialized successfully, starting capture loop")
         
         try:
             while global_vars.pipeline_running and self.cap.isOpened() and self.ir_cap.isOpened():
@@ -108,3 +117,36 @@ class CameraCapture(CaptureBase):
     def is_opened(self):
         """Check if cameras are opened"""
         return (self.cap and self.cap.isOpened()) or (self.ir_cap and self.ir_cap.isOpened())
+    
+    def reinitialize_cameras(self):
+        """重新初始化摄像头"""
+        print("[Camera] Reinitializing cameras...")
+        
+        # 释放旧的摄像头资源
+        self.cleanup()
+        
+        # 重新创建摄像头对象
+        # 需要从外部传入摄像头路径
+        if hasattr(self, 'rgb_cam_path') and hasattr(self, 'ir_cam_path'):
+            try:
+                self.cap = cv2.VideoCapture(self.rgb_cam_path)
+                self.ir_cap = cv2.VideoCapture(self.ir_cam_path)
+                
+                # 检查摄像头是否成功打开
+                if self.cap.isOpened() and self.ir_cap.isOpened():
+                    print("[Camera] Cameras reinitialized successfully")
+                    return True
+                else:
+                    print("[Camera] Failed to reinitialize cameras")
+                    return False
+            except Exception as e:
+                print(f"[Camera] Error reinitializing cameras: {e}")
+                return False
+        else:
+            print("[Camera] Camera paths not available for reinitialization")
+            return False
+    
+    def set_camera_paths(self, rgb_cam_path, ir_cam_path):
+        """设置摄像头路径，用于重新初始化"""
+        self.rgb_cam_path = rgb_cam_path
+        self.ir_cam_path = ir_cam_path
