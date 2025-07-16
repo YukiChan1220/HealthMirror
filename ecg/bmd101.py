@@ -35,18 +35,44 @@ class BMD101:
           - timestamp: 数据实际读取完成的时间戳
         """
         # with self.lock:
-        self.serial_port.reset_input_buffer()
-        start_time = time.time()
+        # self.serial_port.reset_input_buffer()
         payload_data = []
 
-        # wait for sync bytes 0xAA, 0xAA
-        byte1 = self.serial_port.read(1)[0]
-        if byte1 is None or byte1 != 0xAA:
-            return -1, None, None, None
+        while True:
+            # 读取第一个字节，寻找第一个 0xAA
+            byte1 = self.serial_port.read(1)
+            if len(byte1) == 0:
+                # 超时或无数据，继续等待
+                continue
             
-        byte2 = self.serial_port.read(1)[0]
-        if byte2 is None or byte2 != 0xAA:
-            return -1, None, None, None
+            byte1 = byte1[0]
+            if byte1 != 0xAA:
+                # 不是同步头，继续寻找
+                continue
+            
+            # 找到第一个 0xAA，读取第二个字节
+            byte2 = self.serial_port.read(1)
+            if len(byte2) == 0:
+                # 超时，重新开始寻找
+                continue
+                
+            byte2 = byte2[0]
+            if byte2 != 0xAA:
+                # 第二个字节不是 0xAA，继续寻找
+                # 但要考虑这个字节可能是下一个同步头的开始
+                if byte2 == 0xAA:
+                    # 这个字节是 0xAA，可能是下一个同步头的第一个字节
+                    # 继续读取下一个字节检查
+                    byte3 = self.serial_port.read(1)
+                    if len(byte3) == 0:
+                        continue
+                    if byte3[0] == 0xAA:
+                        # 找到了完整的同步头
+                        break
+                continue
+            else:
+                # 找到了完整的同步头 0xAA 0xAA
+                break
             
         # read payloadLength, continue if 0xAA
         payload_length = self.serial_port.read(1)[0]
@@ -76,9 +102,7 @@ class BMD101:
 
         # unpack payload
         i = 0
-        big_packet = False
         new_raw_data = False
-        error_rate = 0
         heart_rate = 0
         raw_data = 0
 
