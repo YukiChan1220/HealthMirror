@@ -860,21 +860,18 @@ class Pipeline:
         print("[Pipeline] Pipeline stopped")
 
     def clear(self):
-        for thread in self.threads:
-            try:
-                thread.join(timeout=1)  # Add a reasonable timeout
-                print(f"[Pipeline] Thread {thread.name} joined successfully")
-            except Exception as e:
-                print(f"[Pipeline] Error joining thread: {e}")
+        # 首先清理队列，确保线程能够正常退出
+        print("[Pipeline] Clearing queues before joining threads...")
+        
         # Dictionary of all queues for systematic clearing
         queues = {
             "frame_queue": self.frame_queue,
-            "ir_frame_queue": self.ir_frame_queue,  # 添加缺失的队列
+            "ir_frame_queue": self.ir_frame_queue,
             "preprocess_queue": self.preprocess_queue,
             "result_queue": self.result_queue,
             "main_queue": self.main_queue,
             "log_queue": self.log_queue,
-            "ir_log_queue": self.ir_log_queue,  # 添加缺失的队列
+            "ir_log_queue": self.ir_log_queue,
             "log_result_queue": self.log_result_queue,
             "raw_ecg_queue": self.raw_ecg_queue,
             "display_queue": self.display_queue,
@@ -891,6 +888,35 @@ class Pipeline:
                         break
             except Exception as e:
                 print(f"[Pipeline] Error clearing {name}: {e}")
+        
+        print("[Pipeline] Queues cleared, now joining threads...")
+        
+        # 给PictureLogger线程更长的时间来完成视频创建
+        picture_log_threads = [thread for thread in self.threads if "PictureLogThread" in thread.name]
+        other_threads = [thread for thread in self.threads if "PictureLogThread" not in thread.name]
+        
+        # 首先等待其他线程
+        for thread in other_threads:
+            try:
+                thread.join(timeout=1)
+                if thread.is_alive():
+                    print(f"[Pipeline] Warning: Thread {thread.name} did not join within timeout")
+                else:
+                    print(f"[Pipeline] Thread {thread.name} joined successfully")
+            except Exception as e:
+                print(f"[Pipeline] Error joining thread {thread.name}: {e}")
+        
+        # 然后等待PictureLogger线程，给它们更长的时间
+        for thread in picture_log_threads:
+            try:
+                print(f"[Pipeline] Waiting for {thread.name} to complete video creation...")
+                thread.join(timeout=5)  # 给PictureLogger 5秒时间完成视频创建
+                if thread.is_alive():
+                    print(f"[Pipeline] Warning: Thread {thread.name} did not join within timeout")
+                else:
+                    print(f"[Pipeline] Thread {thread.name} joined successfully")
+            except Exception as e:
+                print(f"[Pipeline] Error joining thread {thread.name}: {e}")
         
         # Reset object state
         self.inference_results = []

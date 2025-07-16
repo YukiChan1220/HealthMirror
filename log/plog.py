@@ -38,6 +38,11 @@ class PictureLogger():
         if self.frame_count == 0:
             print("[PictureLogger] No frames to save, skipping video creation")
             return
+        
+        # 如果pipeline已经停止并且没有足够的帧，可能跳过视频创建
+        if not global_vars.pipeline_running and self.frame_count < 5:
+            print(f"[PictureLogger] Too few frames ({self.frame_count}) for video creation, skipping")
+            return
             
         txt_path = os.path.join(self.image_path, "timestamps.txt")
         
@@ -125,7 +130,8 @@ class PictureLogger():
                 print(f"[PictureLogger] Error: timestamps.txt not found at {txt_path}")
                 return
                 
-            result = subprocess.run(cmd, cwd=self.image_path, check=True, capture_output=True, text=True)
+            # 添加超时以防止FFmpeg挂起
+            result = subprocess.run(cmd, cwd=self.image_path, check=True, capture_output=True, text=True, timeout=10)
             print("[PictureLogger] FFmpeg stdout:", result.stdout)
             if result.stderr:
                 print("[PictureLogger] FFmpeg stderr:", result.stderr)
@@ -150,11 +156,17 @@ class PictureLogger():
                     "-pix_fmt", "yuv420p",
                     abs_video_path
                 ]
-                result = subprocess.run(backup_cmd, cwd=self.image_path, check=True, capture_output=True, text=True)
+                result = subprocess.run(backup_cmd, cwd=self.image_path, check=True, capture_output=True, text=True, timeout=10)
                 print("[PictureLogger] Backup FFmpeg command succeeded")
             except subprocess.CalledProcessError as e2:
                 print(f"[PictureLogger] Backup command also failed: {e2}")
                 return
+            except subprocess.TimeoutExpired:
+                print("[PictureLogger] Backup FFmpeg command timed out")
+                return
+        except subprocess.TimeoutExpired:
+            print("[PictureLogger] FFmpeg command timed out")
+            return
 
         # 清理文件
         try:
@@ -180,22 +192,36 @@ class PictureLogger():
         video_dir = os.path.dirname(self.video_path)
         if video_dir:
             os.makedirs(video_dir, exist_ok=True)
-            
-        while global_vars.pipeline_running or not self.data_queue.empty():
-            try:
-                images, timestamps = self.data_queue.get(timeout=0.5)
-            except:
-                continue
-            try:
-                for image, timestamp in zip(images, timestamps):
-                    self.save_image(self.frame_count, image, timestamp)
-                    self.frame_count += 1
-            except Exception as e:
-                print(f"[PictureLogger] Error processing image: {e}")
-                continue
-                
-        print(f"[PictureLogger] Saved {self.frame_count} images to {self.image_path}")
+        
+        print(f"[PictureLogger] Starting to process frames...")
+        
+        try:
+            while global_vars.pipeline_running or not self.data_queue.empty():
+                try:
+                    images, timestamps = self.data_queue.get(timeout=0.5)
+                except:
+                    continue
+                try:
+                    for image, timestamp in zip(images, timestamps):
+                        self.save_image(self.frame_count, image, timestamp)
+                        self.frame_count += 1
+                except Exception as e:
+                    print(f"[PictureLogger] Error processing image: {e}")
+                    continue
+        except Exception as e:
+            print(f"[PictureLogger] Error in main loop: {e}")
+        
+        print(f"[PictureLogger] Finished processing. Saved {self.frame_count} images to {self.image_path}")
+        
+        # 创建视频
         if self.frame_count > 0:
-            self.save_video()
+            print(f"[PictureLogger] Creating video from {self.frame_count} frames...")
+            try:
+                self.save_video()
+                print(f"[PictureLogger] Video creation completed successfully")
+            except Exception as e:
+                print(f"[PictureLogger] Error creating video: {e}")
         else:
             print("[PictureLogger] No frames captured, skipping video creation")
+        
+        print(f"[PictureLogger] Thread completed")
