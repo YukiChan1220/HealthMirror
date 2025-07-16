@@ -846,12 +846,23 @@ class Pipeline:
 
     def stop(self) -> None:
         global_vars.pipeline_running = False
+        
+        # 清理外设显示
         try:
             if self.perip_manager:
                 self.perip_manager.refresh_display(0)
                 print("[Pipeline] Display cleared")
         except Exception as e:
             print(f"[Pipeline] Error clearing display: {e}")
+        
+        # 释放摄像头资源
+        try:
+            if hasattr(self.capture, 'cleanup'):
+                self.capture.cleanup()
+                print("[Pipeline] Camera resources cleaned up")
+        except Exception as e:
+            print(f"[Pipeline] Error cleaning up camera: {e}")
+        
         time.sleep(1)
         self.filemerger()
         self.normalizer()
@@ -891,14 +902,15 @@ class Pipeline:
         
         print("[Pipeline] Queues cleared, now joining threads...")
         
-        # 给PictureLogger线程更长的时间来完成视频创建
+        # 分类线程，给不同类型的线程不同的超时时间
         picture_log_threads = [thread for thread in self.threads if "PictureLogThread" in thread.name]
-        other_threads = [thread for thread in self.threads if "PictureLogThread" not in thread.name]
+        capture_threads = [thread for thread in self.threads if "CaptureThread" in thread.name]
+        other_threads = [thread for thread in self.threads if "PictureLogThread" not in thread.name and "CaptureThread" not in thread.name]
         
-        # 首先等待其他线程
+        # 首先等待其他线程（较快的线程）
         for thread in other_threads:
             try:
-                thread.join(timeout=1)
+                thread.join(timeout=2)
                 if thread.is_alive():
                     print(f"[Pipeline] Warning: Thread {thread.name} did not join within timeout")
                 else:
@@ -906,7 +918,19 @@ class Pipeline:
             except Exception as e:
                 print(f"[Pipeline] Error joining thread {thread.name}: {e}")
         
-        # 然后等待PictureLogger线程，给它们更长的时间
+        # 然后等待Capture线程（可能需要更长时间来释放摄像头资源）
+        for thread in capture_threads:
+            try:
+                print(f"[Pipeline] Waiting for {thread.name} to release camera resources...")
+                thread.join(timeout=5)  # 给CaptureThread 10秒时间释放摄像头资源
+                if thread.is_alive():
+                    print(f"[Pipeline] Warning: Thread {thread.name} did not join within timeout")
+                else:
+                    print(f"[Pipeline] Thread {thread.name} joined successfully")
+            except Exception as e:
+                print(f"[Pipeline] Error joining thread {thread.name}: {e}")
+        
+        # 最后等待PictureLogger线程（需要时间来创建视频）
         for thread in picture_log_threads:
             try:
                 print(f"[Pipeline] Waiting for {thread.name} to complete video creation...")
@@ -1021,7 +1045,26 @@ def main():
 
     print("[Main] Releasing resources...")
     bluetooth_handler.stop()
-    cap.release()
+    
+    # 释放摄像头资源
+    try:
+        cap.release()
+        print("[Main] RGB camera released")
+    except Exception as e:
+        print(f"[Main] Error releasing RGB camera: {e}")
+    
+    try:
+        ir_cap.release()
+        print("[Main] IR camera released")
+    except Exception as e:
+        print(f"[Main] Error releasing IR camera: {e}")
+    
+    # 释放OpenCV资源
+    try:
+        cv2.destroyAllWindows()
+        print("[Main] OpenCV windows destroyed")
+    except Exception as e:
+        print(f"[Main] Error destroying OpenCV windows: {e}")
 
 
 if __name__ == "__main__":
