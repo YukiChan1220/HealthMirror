@@ -12,3 +12,4 @@ merged_log.csv
 ecg_log.csv
 images/
 ir_images/
+*.pyc

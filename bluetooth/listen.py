@@ -9,7 +9,7 @@ import threading
 class Bluetooth(BluetoothBase):
     def __init__(self):
         # TODO: ? super().__init__()
-        self.serialSPP = SerialSPP("HealthMirror", "/dev/ttyS1", 115200, 115200)
+        self.serialSPP = SerialSPP("HealthMirror", "/dev/ttyS4", 115200, 115200)
         cmd_failed = self.serialSPP()
         if cmd_failed == 0:
             print("[Bluetooth] SPP module initialized successfully.")
