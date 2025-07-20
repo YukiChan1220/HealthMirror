@@ -566,6 +566,17 @@ class Pipeline:
         # 在Pipeline.__init__方法中添加这些属性
         self.last_ecg_quality_display = 0
         self.ecg_quality_display_interval = 1.0  # 每秒显示一次ECG质量信息
+        
+        # 添加心率计算相关属性
+        self.heart_rate_calculation_buffer = []  # 用于心率计算的ECG数据缓冲区
+        self.heart_rate_window_size = 1024  # 心率计算的窗口大小 (约2秒@512Hz)
+        self.last_heart_rate_calculation = 0
+        self.heart_rate_calculation_interval = 2.0  # 每2秒计算一次心率
+        self.current_heart_rate = 0  # 当前计算出的心率
+        self.ecg_sampling_rate = 512  # ECG采样率，假设为512Hz
+        
+        # 添加ECG调试信息控制标志
+        self.enable_ecg_debug_output = True  # 控制ECG Range等调试信息的输出
 
         # 初始化日志记录器（默认路径，会在启动时更新）
         self.ecglogger = DataLogger({
@@ -672,7 +683,7 @@ class Pipeline:
 
     def cache_preprocessed_data(self, preprocess_queue: queue.Queue) -> None:
         """缓存预处理后的图像数据，用于采集结束后的批量推理"""
-        while global_vars.pipeline_running:
+        while global_vars.data_acquisition_running:
             try:
                 frames, timestamps = preprocess_queue.get(timeout=0.5)
                 with self.cache_lock:
@@ -687,6 +698,7 @@ class Pipeline:
                 continue
             except Exception as e:
                 print(f"[Pipeline] Error in cache_preprocessed_data: {e}")
+                time.sleep(0.1)
                 time.sleep(0.1)
 
     def batch_inference_cached_data(self):
@@ -835,10 +847,64 @@ class Pipeline:
                 print(f"[Pipeline] rPPG logger file path: {self.rppglogger.file_path}")
             else:
                 print("[Pipeline] Warning: rPPG logger not found")
+            
+            # 在推理完成并保存到文件后，清空队列中的推理结果
+            self._cleanup_inference_queues()
                 
         except Exception as e:
             print(f"[Pipeline] Error saving batch results: {e}")
             raise  # 重新抛出异常，确保问题被及时发现
+
+    def _cleanup_inference_queues(self):
+        """清空推理相关的队列，避免残留数据"""
+        queue_cleanup_count = 0
+        
+        # 清空数据队列
+        if hasattr(self, 'queue'):
+            while not self.queue.empty():
+                try:
+                    self.queue.get_nowait()
+                    queue_cleanup_count += 1
+                except queue.Empty:
+                    break
+        
+        # 清空结果队列
+        if hasattr(self, 'results_queue'):
+            while not self.results_queue.empty():
+                try:
+                    self.results_queue.get_nowait()
+                    queue_cleanup_count += 1
+                except queue.Empty:
+                    break
+        
+        # 清空rPPG结果队列（已经保存到文件的结果不需要再保留）
+        if hasattr(self, 'log_result_queue'):
+            log_queue_size = self.log_result_queue.qsize()
+            while not self.log_result_queue.empty():
+                try:
+                    self.log_result_queue.get_nowait()
+                    queue_cleanup_count += 1
+                except queue.Empty:
+                    break
+            print(f"[Pipeline] Cleared rPPG log queue: {log_queue_size} items")
+        
+        # 清空其他可能的队列
+        queue_attrs = ['queue_face', 'queue_step', 'queue_physnet']
+        for attr in queue_attrs:
+            if hasattr(self, attr):
+                queue_obj = getattr(self, attr)
+                attr_count = 0
+                while not queue_obj.empty():
+                    try:
+                        queue_obj.get_nowait()
+                        attr_count += 1
+                        queue_cleanup_count += 1
+                    except queue.Empty:
+                        break
+                if attr_count > 0:
+                    print(f"[Pipeline] Cleared {attr} queue: {attr_count} items")
+        
+        print(f"[Pipeline] Queue cleanup completed: cleared {queue_cleanup_count} items total")
 
 
     def exchange_data(self, result_queue: queue.Queue, main_queue: queue.Queue) -> None:
@@ -856,16 +922,19 @@ class Pipeline:
                 time.sleep(0.1)
 
     def results(self) -> None:
-        """处理实时ECG质量监测，但不处理rPPG推理结果"""
-        while global_vars.pipeline_running:
+        """处理实时ECG质量监测和心率计算，但不处理rPPG推理结果"""
+        while global_vars.pipeline_running and global_vars.data_acquisition_running:
             try:
-                # 处理ECG质量监测
+                # 处理ECG质量监测和心率计算
                 self._process_ecg_quality()
                 
-                # 控制ECG质量信息的显示频率
+                # 只在数据采集阶段显示ECG质量信息
                 current_time = time.time()
                 if current_time - self.last_ecg_quality_display >= self.ecg_quality_display_interval:
-                    print(f"[Pipeline] ECG Quality: {self.ecg_quality} (caching mode, no real-time rPPG)")
+                    if self.current_heart_rate > 0:
+                        print(f"[Pipeline] ECG Quality: {self.ecg_quality}, Heart Rate: {self.current_heart_rate:.1f} BPM (caching mode)")
+                    else:
+                        print(f"[Pipeline] ECG Quality: {self.ecg_quality} (caching mode, calculating heart rate...)")
                     self.last_ecg_quality_display = current_time
                 
                 # 短暂休眠，减少CPU占用
@@ -876,7 +945,7 @@ class Pipeline:
                 time.sleep(0.1)
 
     def _process_ecg_quality(self):
-        """处理ECG数据质量监测"""
+        """处理ECG数据质量监测和心率计算"""
         try:
             # 从monitor_ecg_queue获取ECG数据
             while not self.monitor_ecg_queue.empty():
@@ -888,11 +957,19 @@ class Pipeline:
                     else:
                         ecg_value = float(ecg_data)
                     
+                    # 添加到质量监测缓冲区
                     self.ecg_buffer.append(ecg_value)
                     
-                    # 保持窗口大小
+                    # 保持质量监测窗口大小
                     if len(self.ecg_buffer) > self.ecg_window_size:
                         self.ecg_buffer.pop(0)
+                    
+                    # 添加到心率计算缓冲区
+                    self.heart_rate_calculation_buffer.append(ecg_value)
+                    
+                    # 保持心率计算窗口大小
+                    if len(self.heart_rate_calculation_buffer) > self.heart_rate_window_size:
+                        self.heart_rate_calculation_buffer.pop(0)
                         
                 except queue.Empty:
                     break
@@ -914,17 +991,88 @@ class Pipeline:
                     self.ecg_quality = "error"
                 
                 # 可选：输出调试信息
-                if self.log:
+                if self.log and self.enable_ecg_debug_output:
                     print(f"[Pipeline] ECG Range: {ecg_range:.1f}, Quality: {self.ecg_quality}")
+            
+            # 定期计算心率
+            current_time = time.time()
+            if (current_time - self.last_heart_rate_calculation >= self.heart_rate_calculation_interval and
+                len(self.heart_rate_calculation_buffer) >= self.heart_rate_window_size):
+                self._calculate_heart_rate()
+                self.last_heart_rate_calculation = current_time
                     
         except Exception as e:
             print(f"[Pipeline] Error in ECG quality processing: {e}")
             self.ecg_quality = "error"  # 处理错误时设为error状态
+    
+    def _calculate_heart_rate(self):
+        """从ECG数据计算心率"""
+        try:
+            if len(self.heart_rate_calculation_buffer) < self.heart_rate_window_size:
+                return
+            
+            # 获取ECG数据
+            ecg_data = np.array(self.heart_rate_calculation_buffer)
+            
+            # 简单的R峰检测算法
+            # 1. 应用高通滤波去除基线漂移
+            from scipy.signal import butter, filtfilt
+            
+            # 设计滤波器 (高通滤波，截止频率0.5Hz)
+            nyquist = self.ecg_sampling_rate / 2
+            low_cutoff = 0.5 / nyquist
+            high_cutoff = 40 / nyquist  # 低通滤波截止频率40Hz
+            
+            # 带通滤波器
+            b, a = butter(3, [low_cutoff, high_cutoff], btype='band')
+            filtered_ecg = filtfilt(b, a, ecg_data)
+            
+            # 2. 简单的R峰检测：找到局部最大值
+            from scipy.signal import find_peaks
+            
+            # 自适应阈值：使用数据的标准差
+            threshold = np.std(filtered_ecg) * 0.5
+            min_distance = int(self.ecg_sampling_rate * 0.4)  # 最小间隔0.4秒（对应150 BPM）
+            
+            # 找到R峰
+            peaks, _ = find_peaks(filtered_ecg, height=threshold, distance=min_distance)
+            
+            # 计算心率
+            if len(peaks) >= 2:
+                # 计算平均RR间隔
+                rr_intervals = np.diff(peaks) / self.ecg_sampling_rate  # 转换为秒
+                avg_rr_interval = np.mean(rr_intervals)
+                
+                # 计算心率（每分钟的心跳次数）
+                heart_rate = 60.0 / avg_rr_interval
+                
+                # 心率范围检查
+                if 30 <= heart_rate <= 200:
+                    self.current_heart_rate = heart_rate
+                    
+                    # 更新显示
+                    self.update_heart_rate_display(heart_rate)
+                    
+                    if self.log:
+                        print(f"[Pipeline] Calculated heart rate: {heart_rate:.1f} BPM (from {len(peaks)} peaks)")
+                else:
+                    if self.log:
+                        print(f"[Pipeline] Heart rate out of range: {heart_rate:.1f} BPM")
+            else:
+                if self.log:
+                    print(f"[Pipeline] Insufficient R peaks detected: {len(peaks)}")
+                    
+        except Exception as e:
+            print(f"[Pipeline] Error calculating heart rate: {e}")
+            # 如果心率计算失败，可以显示一个默认值或保持之前的值
+            if self.current_heart_rate > 0:
+                self.update_heart_rate_display(self.current_heart_rate)
 
     def update_heart_rate_display(self, heart_rate):
         """更新心率显示到外设管理器"""
         try:
-            if self.perip_manager and heart_rate is not None:
+            # 只在数据采集阶段更新显示
+            if global_vars.data_acquisition_running and self.perip_manager and heart_rate is not None:
                 # 确保心率在合理范围内
                 hr_display = max(30, min(200, int(round(heart_rate))))
                 self.perip_manager.refresh_display(hr_display)
@@ -955,7 +1103,12 @@ class Pipeline:
         if hasattr(self.ecg, 'should_stop'):
             self.ecg.should_stop = False
         
+        # 启用ECG调试信息输出
+        self.enable_ecg_debug_output = True
+        
+        # 启动两个运行状态标识符
         global_vars.pipeline_running = True
+        global_vars.data_acquisition_running = True
         self.last_display_update = 0
         self.threads = [
             capture_thread := threading.Thread(
@@ -1002,8 +1155,9 @@ class Pipeline:
         print("[Pipeline] Pipeline started with caching mode")
 
     def stop(self) -> None:
-        # 先停止数据采集相关的线程，但保持pipeline_running为True，让日志线程继续运行
-        print("[Pipeline] Stopping data acquisition threads...")
+        # 第一阶段：停止数据采集（摄像头和ECG）
+        print("[Pipeline] Stage 1: Stopping data acquisition...")
+        global_vars.data_acquisition_running = False
         
         # 停止摄像头采集
         try:
@@ -1021,6 +1175,13 @@ class Pipeline:
         except Exception as e:
             print(f"[Pipeline] Error stopping ECG capture: {e}")
         
+        # 等待采集线程结束
+        time.sleep(0.5)
+        
+        # 第二阶段：停止终端输出和显示刷新
+        print("[Pipeline] Stage 2: Stopping terminal output and display refresh...")
+        self.enable_ecg_debug_output = False
+        
         # 清理外设显示
         try:
             if self.perip_manager:
@@ -1028,9 +1189,6 @@ class Pipeline:
                 print("[Pipeline] Display cleared")
         except Exception as e:
             print(f"[Pipeline] Error clearing display: {e}")
-        
-        # 等待一段时间让采集线程结束
-        time.sleep(2)
         
         # 释放摄像头资源
         try:
@@ -1047,25 +1205,22 @@ class Pipeline:
                 print("[Pipeline] ECG resources cleaned up")
         except Exception as e:
             print(f"[Pipeline] Error cleaning up ECG: {e}")
+        time.sleep(0.5)
         
-        # 执行批量推理（此时pipeline_running仍为True，日志线程还在运行）
-        print("[Pipeline] Starting batch inference on cached data...")
+        # 第三阶段：执行批量推理
+        print("[Pipeline] Stage 3: Starting batch inference...")
         try:
             self.batch_inference_cached_data()
         except ValueError as ve:
-            # 模型输出验证失败，但不影响后续流程
             print(f"[Pipeline] Batch inference validation failed: {ve}")
             print("[Pipeline] Continuing with pipeline shutdown...")
         except Exception as e:
-            # 其他推理错误，记录但不影响后续流程
             print(f"[Pipeline] Batch inference failed: {e}")
             print("[Pipeline] Continuing with pipeline shutdown...")
-            import traceback
-            traceback.print_exc()
         
         # 等待日志队列中的数据被处理完
         print("[Pipeline] Waiting for log queues to be processed...")
-        max_wait_time = 10  # 最多等待10秒
+        max_wait_time = 30
         start_time = time.time()
         
         while (time.time() - start_time) < max_wait_time:
@@ -1079,9 +1234,10 @@ class Pipeline:
         else:
             print(f"[Pipeline] Timeout waiting for log queues to empty after {max_wait_time}s")
         
-        # 现在才设置pipeline_running为False，让日志线程退出
+        # 第四阶段：停止所有线程，保存和归一化
+        print("[Pipeline] Stage 4: Stopping all threads and finalizing...")
         global_vars.pipeline_running = False
-        print("[Pipeline] Set pipeline_running to False, allowing log threads to exit")
+        print("[Pipeline] Set pipeline_running to False, allowing all threads to exit")
         
         # 继续执行文件合并和归一化
         try:
@@ -1176,6 +1332,11 @@ class Pipeline:
         self.heart_rate_buffer = []  # Also clear the heart rate buffer
         self.ecg_buffer = []  # 清空ECG缓冲区
         self.ecg_quality = "normal"  # 重置ECG质量状态
+        self.enable_ecg_debug_output = True  # 重置ECG调试输出标志
+        
+        # 重置运行状态标识符
+        global_vars.pipeline_running = False
+        global_vars.data_acquisition_running = False
         
         # 清理缓存数据
         with self.cache_lock:
@@ -1274,6 +1435,8 @@ def main():
         last_status = None
         while True:
             current_status = global_vars.pipeline_running
+            data_acquisition_status = global_vars.data_acquisition_running
+            
             if current_status != last_status:
                 if current_status:
                     with pipeline.cache_lock:
@@ -1282,11 +1445,11 @@ def main():
                 else:
                     print("[Main] Pipeline stopped, waiting for commands...")
                 last_status = current_status
-            elif current_status:  # 只在pipeline运行时显示缓存状态
+            elif current_status and data_acquisition_status:  # 只在数据采集阶段显示缓存状态
                 with pipeline.cache_lock:
                     cached_count = len(pipeline.cached_frames)
                 if cached_count > 0:  # 只在有缓存数据时显示
-                    print(f"[Main] Caching mode active. Cached frames: {cached_count}")
+                    print(f"[Main] Data acquisition active. Cached frames: {cached_count}")
             time.sleep(1)
     except KeyboardInterrupt:
         print("[Main] Shutting down...")
