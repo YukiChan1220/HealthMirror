@@ -545,6 +545,11 @@ class Pipeline:
         self.csv_file = config["log_path"]
         global_vars.pipeline_running = False
         self.heart_rate_buffer = []
+        
+        # 添加图像缓存相关属性
+        self.cached_frames = []  # 存储预处理后的图像数据
+        self.cached_timestamps = []  # 存储对应的时间戳
+        self.cache_lock = threading.Lock()  # 线程安全锁
         # 添加显示相关属性
         self.last_display_update = 0
         self.display_update_interval = 1.0  # 每1秒更新一次显示
@@ -665,6 +670,176 @@ class Pipeline:
         
         print(f"[Pipeline] Pipeline paths updated for session: {session_paths['session_dir']}")
 
+    def cache_preprocessed_data(self, preprocess_queue: queue.Queue) -> None:
+        """缓存预处理后的图像数据，用于采集结束后的批量推理"""
+        while global_vars.pipeline_running:
+            try:
+                frames, timestamps = preprocess_queue.get(timeout=0.5)
+                with self.cache_lock:
+                    # 将batch数据逐个添加到缓存中
+                    for frame, timestamp in zip(frames, timestamps):
+                        self.cached_frames.append(frame)
+                        self.cached_timestamps.append(timestamp)
+                if self.log:
+                    print(f"[Pipeline] Cached {len(frames)} frames, total cached: {len(self.cached_frames)}")
+            except queue.Empty:
+                time.sleep(0.01)
+                continue
+            except Exception as e:
+                print(f"[Pipeline] Error in cache_preprocessed_data: {e}")
+                time.sleep(0.1)
+
+    def batch_inference_cached_data(self):
+        """对缓存的图像数据进行批量推理"""
+        if not self.cached_frames:
+            print("[Pipeline] No cached frames to process")
+            return
+        
+        print(f"[Pipeline] Starting batch inference on {len(self.cached_frames)} cached frames...")
+        
+        try:
+            # 根据模型类型进行不同的处理
+            if hasattr(self.model, 'state'):  # Step模型有状态
+                self._batch_inference_step_model()
+            else:  # PhysNet模型无状态
+                self._batch_inference_physnet_model()
+            
+            print("[Pipeline] Batch inference completed successfully")
+            
+        except ValueError as ve:
+            # 模型输出验证失败
+            print(f"[Pipeline] Batch inference failed: {ve}")
+            raise  # 重新抛出验证错误
+        except Exception as e:
+            # 其他推理错误
+            print(f"[Pipeline] Batch inference error: {e}")
+            import traceback
+            traceback.print_exc()
+            raise  # 重新抛出错误
+        
+        print("[Pipeline] Batch inference completed")
+    
+    def _batch_inference_step_model(self):
+        """对Step模型进行批量推理"""
+        import pickle
+        
+        # 重置模型状态
+        with open(self.model.state_path, "rb") as f:
+            self.model.state = pickle.load(f)
+        
+        results = []
+        for i, (frame, timestamp) in enumerate(zip(self.cached_frames, self.cached_timestamps)):
+            try:
+                # 完全按照原始Step模型的方式处理
+                image = np.array([[frame]]).astype("float16") / 255.0
+                input_dict = {"arg_0.1": image, "onnx::Mul_37": self.model.dt, **self.model.state}
+                result = self.model.model.run(None, input_dict)
+                self.model.state = dict(zip(list(input_dict)[2:], result[1:]))
+                
+                inference_result = result[0][0, 0]
+                results.append([timestamp, inference_result])
+                
+                if i % 100 == 0:
+                    print(f"[Pipeline] Processed {i+1}/{len(self.cached_frames)} frames")
+                    
+            except Exception as e:
+                print(f"[Pipeline] Error processing frame {i}: {e}")
+                print(f"[Pipeline] Frame shape: {frame.shape if hasattr(frame, 'shape') else type(frame)}")
+                print(f"[Pipeline] Image shape after processing: {image.shape if hasattr(image, 'shape') else type(image)}")
+                continue
+        
+        # 保存模型状态
+        with open(self.model.state_path, "wb") as f:
+            pickle.dump(self.model.state, f)
+        
+        # 检查模型输出是否恒为0
+        self._validate_inference_results(results)
+        
+        # 处理推理结果
+        self._process_batch_results(results)
+    
+    def _batch_inference_physnet_model(self):
+        """对PhysNet模型进行批量推理"""
+        results = []
+        for i, (frame, timestamp) in enumerate(zip(self.cached_frames, self.cached_timestamps)):
+            try:
+                batch = np.array([frame]).astype("float64") / 255.0
+                input_dict = {"x.1": batch}
+                result = self.model.model.run(None, input_dict)
+                
+                inference_result = result[0][0]
+                results.append([timestamp, inference_result])
+                
+                if i % 100 == 0:
+                    print(f"[Pipeline] Processed {i+1}/{len(self.cached_frames)} frames")
+                    
+            except Exception as e:
+                print(f"[Pipeline] Error processing frame {i}: {e}")
+                continue
+        
+        # 检查模型输出是否恒为0
+        self._validate_inference_results(results)
+        
+        # 处理推理结果
+        self._process_batch_results(results)
+    
+    def _validate_inference_results(self, results):
+        """验证推理结果是否有效（检查是否恒为0）"""
+        if not results:
+            raise ValueError("[Pipeline] No inference results to validate")
+        
+        # 检查是否所有结果都为0或接近0
+        inference_values = [float(result[1]) for result in results]
+        non_zero_count = sum(1 for val in inference_values if abs(val) > 1e-6)
+        
+        if non_zero_count == 0:
+            raise ValueError(f"[Pipeline] Model output error: All {len(results)} inference results are zero or near-zero")
+        
+        # 检查是否大部分结果都为0（可能存在问题）
+        zero_percentage = (len(results) - non_zero_count) / len(results) * 100
+        if zero_percentage > 95:  # 如果超过95%的结果为0，发出警告
+            print(f"[Pipeline] Warning: {zero_percentage:.1f}% of inference results are zero")
+        
+        print(f"[Pipeline] Inference validation passed: {non_zero_count}/{len(results)} non-zero results")
+    
+    def _process_batch_results(self, results):
+        """处理批量推理结果，保存到CSV文件"""
+        if not results:
+            print("[Pipeline] No valid results to save")
+            return
+        
+        print(f"[Pipeline] Processing {len(results)} batch results")
+        
+        # 确保CSV文件目录存在
+        csv_dir = os.path.dirname(self.csv_file)
+        if csv_dir:
+            os.makedirs(csv_dir, exist_ok=True)
+        
+        # 打开CSV文件并写入结果
+        try:
+            with open(self.csv_file, mode='a', newline='') as file:
+                writer = csv.writer(file)
+                for result in results:
+                    writer.writerow(result)
+            
+            print(f"[Pipeline] Saved {len(results)} inference results to {self.csv_file}")
+            
+            # 将结果添加到log_result_queue用于rPPG日志记录（类似ECG日志的处理方式）
+            for result in results:
+                self.log_result_queue.put(result)
+            
+            print(f"[Pipeline] Added {len(results)} results to rPPG log queue (queue size: {self.log_result_queue.qsize()})")
+            
+            # 检查rPPG日志记录器的状态
+            if hasattr(self, 'rppglogger'):
+                print(f"[Pipeline] rPPG logger file path: {self.rppglogger.file_path}")
+            else:
+                print("[Pipeline] Warning: rPPG logger not found")
+                
+        except Exception as e:
+            print(f"[Pipeline] Error saving batch results: {e}")
+            raise  # 重新抛出异常，确保问题被及时发现
+
 
     def exchange_data(self, result_queue: queue.Queue, main_queue: queue.Queue) -> None:
         while global_vars.pipeline_running:
@@ -681,61 +856,24 @@ class Pipeline:
                 time.sleep(0.1)
 
     def results(self) -> None:
+        """处理实时ECG质量监测，但不处理rPPG推理结果"""
         while global_vars.pipeline_running:
             try:
-                result = self.main_queue.get(timeout=0.5)
-            except queue.Empty:
-                # 队列为空时短暂休眠，减少CPU占用
-                print("[Pipeline] No results available, waiting...")
-                time.sleep(0.05)
-                continue
+                # 处理ECG质量监测
+                self._process_ecg_quality()
+                
+                # 控制ECG质量信息的显示频率
+                current_time = time.time()
+                if current_time - self.last_ecg_quality_display >= self.ecg_quality_display_interval:
+                    print(f"[Pipeline] ECG Quality: {self.ecg_quality} (caching mode, no real-time rPPG)")
+                    self.last_ecg_quality_display = current_time
+                
+                # 短暂休眠，减少CPU占用
+                time.sleep(0.1)
+                
             except Exception as e:
                 print(f"[Pipeline] Error in results processing: {e}")
                 time.sleep(0.1)
-                continue
-            
-            # 处理ECG质量监测
-            self._process_ecg_quality()
-            
-            self.log_result_queue.put(result)
-            
-            # result格式是[timestamp, inference_result]
-            if len(result) >= 2:
-                timestamp, inference_result = result[0], result[1]
-                
-                # 只添加推理结果，不添加时间戳
-                self.inference_results.append(inference_result)
-                
-                # 保持缓冲区大小限制
-                if len(self.inference_results) > self.max_display_points:
-                    self.inference_results.pop(0)
-                
-                # 使用推理结果作为心率数据
-                new_heart_rate = inference_result
-                self.heart_rate_buffer.append(new_heart_rate)
-            
-            # Ensure we only keep enough data for 10 seconds (e.g., 300 data points if fps = 30)
-            if len(self.heart_rate_buffer) > self.config["fps"] * 6:
-                self.heart_rate_buffer.pop(0)
-
-            # Calculate heart rate when there is enough data (10 seconds worth)
-            if len(self.heart_rate_buffer) >= self.config["fps"] * 6:
-                # Apply the bandpass filter
-                filtered_data = bandpass_filter(np.array(self.heart_rate_buffer), lowcut=0.5, highcut=3)
-                # Get the heart rate from the filtered data
-                heart_rate = get_hr(filtered_data)
-                self.hr = heart_rate
-                
-                # 更新显示
-                current_time = time.time()
-                if current_time - self.last_display_update >= self.display_update_interval:
-                    self.update_heart_rate_display(heart_rate)
-                    self.last_display_update = current_time
-                
-                # 控制ECG质量信息的显示频率
-                if current_time - self.last_ecg_quality_display >= self.ecg_quality_display_interval:
-                    print(f"[Pipeline] Heart Rate: {heart_rate:.1f} BPM, ECG Quality: {self.ecg_quality}")
-                    self.last_ecg_quality_display = current_time
 
     def _process_ecg_quality(self):
         """处理ECG数据质量监测"""
@@ -808,6 +946,15 @@ class Pipeline:
 
     def start(self) -> None:
         self.clear()
+        
+        # 重置摄像头停止标志
+        if hasattr(self.capture, 'should_stop'):
+            self.capture.should_stop = False
+        
+        # 重置ECG停止标志
+        if hasattr(self.ecg, 'should_stop'):
+            self.ecg.should_stop = False
+        
         global_vars.pipeline_running = True
         self.last_display_update = 0
         self.threads = [
@@ -829,17 +976,12 @@ class Pipeline:
                 daemon=True,
                 name="IRPreprocessThread",
             ),
-            model_thread := threading.Thread(
-                target=self.model,
-                args=(self.preprocess_queue, self.result_queue),
+            # 替换实时模型推理线程为缓存线程
+            cache_thread := threading.Thread(
+                target=self.cache_preprocessed_data,
+                args=(self.preprocess_queue,),
                 daemon=True,
-                name="ModelThread",
-            ),
-            data_thread := threading.Thread(
-                target=self.exchange_data,
-                args=(self.result_queue, self.main_queue),
-                daemon=True,
-                name="DataExchangeThread",
+                name="CacheThread",
             ),
             ecg_thread := threading.Thread(
                 target=self.ecg,
@@ -849,6 +991,7 @@ class Pipeline:
             ),
         ]
 
+        # 保留ECG质量监测线程和日志线程
         self.threads.append(results_thread := threading.Thread(target=self.results, daemon=True, name="ResultsThread"))
         self.threads.append(ecg_log_thread := threading.Thread(target=self.ecglogger, daemon=True, name="ECGLogThread"))
         self.threads.append(rppg_log_thread := threading.Thread(target=self.rppglogger, daemon=True, name="RPPGLogThread"))
@@ -856,10 +999,27 @@ class Pipeline:
         self.threads.append(ir_picture_log_thread := threading.Thread(target=self.irpicturelogger, daemon=True, name="IRPictureLogThread"))
         for thread in self.threads:
             thread.start()
-        print("[Pipeline] Pipeline started")
+        print("[Pipeline] Pipeline started with caching mode")
 
     def stop(self) -> None:
-        global_vars.pipeline_running = False
+        # 先停止数据采集相关的线程，但保持pipeline_running为True，让日志线程继续运行
+        print("[Pipeline] Stopping data acquisition threads...")
+        
+        # 停止摄像头采集
+        try:
+            if hasattr(self.capture, 'stop_capture'):
+                self.capture.stop_capture()
+                print("[Pipeline] Camera capture stopped")
+        except Exception as e:
+            print(f"[Pipeline] Error stopping camera capture: {e}")
+        
+        # 停止ECG采集
+        try:
+            if hasattr(self.ecg, 'stop_capture'):
+                self.ecg.stop_capture()
+                print("[Pipeline] ECG capture stopped")
+        except Exception as e:
+            print(f"[Pipeline] Error stopping ECG capture: {e}")
         
         # 清理外设显示
         try:
@@ -869,6 +1029,9 @@ class Pipeline:
         except Exception as e:
             print(f"[Pipeline] Error clearing display: {e}")
         
+        # 等待一段时间让采集线程结束
+        time.sleep(2)
+        
         # 释放摄像头资源
         try:
             if hasattr(self.capture, 'cleanup'):
@@ -877,9 +1040,60 @@ class Pipeline:
         except Exception as e:
             print(f"[Pipeline] Error cleaning up camera: {e}")
         
-        time.sleep(1)
-        self.filemerger()
-        self.normalizer()
+        # 释放ECG资源
+        try:
+            if hasattr(self.ecg, 'cleanup'):
+                self.ecg.cleanup()
+                print("[Pipeline] ECG resources cleaned up")
+        except Exception as e:
+            print(f"[Pipeline] Error cleaning up ECG: {e}")
+        
+        # 执行批量推理（此时pipeline_running仍为True，日志线程还在运行）
+        print("[Pipeline] Starting batch inference on cached data...")
+        try:
+            self.batch_inference_cached_data()
+        except ValueError as ve:
+            # 模型输出验证失败，但不影响后续流程
+            print(f"[Pipeline] Batch inference validation failed: {ve}")
+            print("[Pipeline] Continuing with pipeline shutdown...")
+        except Exception as e:
+            # 其他推理错误，记录但不影响后续流程
+            print(f"[Pipeline] Batch inference failed: {e}")
+            print("[Pipeline] Continuing with pipeline shutdown...")
+            import traceback
+            traceback.print_exc()
+        
+        # 等待日志队列中的数据被处理完
+        print("[Pipeline] Waiting for log queues to be processed...")
+        max_wait_time = 10  # 最多等待10秒
+        start_time = time.time()
+        
+        while (time.time() - start_time) < max_wait_time:
+            if (self.log_result_queue.empty() and 
+                self.raw_ecg_queue.empty() and 
+                self.log_queue.empty() and 
+                self.ir_log_queue.empty()):
+                print("[Pipeline] All log queues are empty")
+                break
+            time.sleep(0.1)
+        else:
+            print(f"[Pipeline] Timeout waiting for log queues to empty after {max_wait_time}s")
+        
+        # 现在才设置pipeline_running为False，让日志线程退出
+        global_vars.pipeline_running = False
+        print("[Pipeline] Set pipeline_running to False, allowing log threads to exit")
+        
+        # 继续执行文件合并和归一化
+        try:
+            self.filemerger()
+        except Exception as e:
+            print(f"[Pipeline] File merge failed: {e}")
+        
+        try:
+            self.normalizer()
+        except Exception as e:
+            print(f"[Pipeline] Normalization failed: {e}")
+        
         time.sleep(1)
         self.clear()
         print("[Pipeline] Pipeline stopped")
@@ -962,6 +1176,12 @@ class Pipeline:
         self.heart_rate_buffer = []  # Also clear the heart rate buffer
         self.ecg_buffer = []  # 清空ECG缓冲区
         self.ecg_quality = "normal"  # 重置ECG质量状态
+        
+        # 清理缓存数据
+        with self.cache_lock:
+            self.cached_frames = []
+            self.cached_timestamps = []
+        print(f"[Pipeline] Cleared cached data")
 
         self.last_display_update = 0
         self.last_ecg_quality_display = 0
@@ -1051,12 +1271,22 @@ def main():
 
     print("[Main] System is now waiting for Bluetooth commands (start_capture / stop_capture)...")
     try:
+        last_status = None
         while True:
-            if global_vars.pipeline_running:
-                if pipeline.inference_results:
-                    print("[Main] Latest Inference Results:", pipeline.inference_results[-5:])
+            current_status = global_vars.pipeline_running
+            if current_status != last_status:
+                if current_status:
+                    with pipeline.cache_lock:
+                        cached_count = len(pipeline.cached_frames)
+                    print(f"[Main] Caching mode active. Cached frames: {cached_count}")
                 else:
-                    print("[Main] No inference results yet.")
+                    print("[Main] Pipeline stopped, waiting for commands...")
+                last_status = current_status
+            elif current_status:  # 只在pipeline运行时显示缓存状态
+                with pipeline.cache_lock:
+                    cached_count = len(pipeline.cached_frames)
+                if cached_count > 0:  # 只在有缓存数据时显示
+                    print(f"[Main] Caching mode active. Cached frames: {cached_count}")
             time.sleep(1)
     except KeyboardInterrupt:
         print("[Main] Shutting down...")

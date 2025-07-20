@@ -8,6 +8,18 @@ class ECG(ECGBase):
     def __init__(self, config: dict) -> None:
         self.bmd101 = BMD101(config["bmd101"]["serial_port"])
         self.max_queue_size = 512
+        self.should_stop = False  # 添加停止标志
+
+    def stop_capture(self):
+        """停止ECG数据采集"""
+        self.should_stop = True
+        print("[ECG] Stop capture requested")
+    
+    def cleanup(self):
+        """清理ECG资源"""
+        # 重置停止标志
+        self.should_stop = False
+        print("[ECG] ECG resources cleaned up")
 
     def read_bmd101(self) -> None:
         ret, heart_rate, raw_data, timestamp = self.bmd101.read_data()
@@ -21,7 +33,7 @@ class ECG(ECGBase):
 
     def __call__(self, raw_ecg_queue: Queue, monitor_ecg_queue: Queue) -> None:
         self.bmd101.flush_buffer()
-        while global_vars.pipeline_running:
+        while global_vars.pipeline_running and not self.should_stop:
             ecg_data = self.read_bmd101()
             if ecg_data is not None:
                 raw_ecg_queue.put(ecg_data)
