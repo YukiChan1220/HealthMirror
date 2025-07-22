@@ -848,6 +848,7 @@ class Pipeline:
             else:
                 print("[Pipeline] Warning: rPPG logger not found")
             
+            time.sleep(0.5)
             # 在推理完成并保存到文件后，清空队列中的推理结果
             self._cleanup_inference_queues()
                 
@@ -1094,14 +1095,6 @@ class Pipeline:
 
     def start(self) -> None:
         self.clear()
-        
-        # 重置摄像头停止标志
-        if hasattr(self.capture, 'should_stop'):
-            self.capture.should_stop = False
-        
-        # 重置ECG停止标志
-        if hasattr(self.ecg, 'should_stop'):
-            self.ecg.should_stop = False
         
         # 启用ECG调试信息输出
         self.enable_ecg_debug_output = True

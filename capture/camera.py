@@ -11,11 +11,9 @@ class CameraCapture(CaptureBase):
         super().__init__()
         self.cap = cap
         self.ir_cap = ir_cap
-        self.should_stop = False  # 添加停止标志
 
     def stop_capture(self):
         """停止数据采集"""
-        self.should_stop = True
         print("[Camera] Stop capture requested")
 
     def __call__(self, frame_queue: Queue, ir_frame_queue: Queue) -> None:
@@ -40,7 +38,7 @@ class CameraCapture(CaptureBase):
         print("[Camera] Cameras initialized successfully, starting capture loop")
         
         try:
-            while global_vars.pipeline_running and not self.should_stop and self.cap.isOpened() and self.ir_cap.isOpened():
+            while global_vars.pipeline_running and global_vars.data_acquisition_running and self.cap.isOpened() and self.ir_cap.isOpened():
                 # 检查队列是否已满，避免阻塞
                 if frame_queue.full():
                     print("[Camera] Frame queue is full, skipping frame")
@@ -106,8 +104,6 @@ class CameraCapture(CaptureBase):
     
     def cleanup(self):
         """Clean up camera resources"""
-        # 重置停止标志
-        self.should_stop = False
         
         try:
             if self.cap and self.cap.isOpened():
