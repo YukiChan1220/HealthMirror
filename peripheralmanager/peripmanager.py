@@ -14,10 +14,11 @@ class PeripheralManager(PeripheralManagerBase):
         )
         
     def get_battery_level(self) -> int:
-        self.serial_port.write(b'batt\n')
+        self.serial_port.write(b'get_batt\n')
         response = self.serial_port.readline().strip()
         if response.isdigit():
-            return int(response)
+            batt_level = int((int(response) - 68) / 18 * 100)
+            return batt_level if 0 <= batt_level <= 100 else 0
         return -1
     
     def refresh_display(self, number: int) -> None:

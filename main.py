@@ -7,6 +7,8 @@ import os
 import csv
 import json
 import gc
+import pickle
+import traceback
 from datetime import datetime
 from scipy.signal import butter, filtfilt, welch
 
@@ -21,6 +23,7 @@ from log.dlog import DataLogger
 from log.plog import PictureLogger
 from log.merge import FileMerger
 from log.normalize import Normalizer
+from log.timeconv import TimestampConverter
 from peripherals.peripherals import Peripherals
 from peripheralmanager.peripmanager import PeripheralManager
 from network.wifi import WiFiManager
@@ -45,6 +48,11 @@ class SessionManager:
         self.patient_info = None
         self.patient_id_file = os.path.join(self.base_data_dir, "patient_id_counter.txt")
         
+        # 时间同步相关属性
+        self.reference_timestamp = None  # 接收到的基准时间戳（Unix时间戳）
+        self.system_timestamp = None     # 系统接收到命令时的时间戳
+        self.time_offset = None          # 时间差（reference - system）
+        
         # 确保基础数据目录存在
         os.makedirs(self.base_data_dir, exist_ok=True)
     
@@ -53,6 +61,10 @@ class SessionManager:
         self.current_session_dir = None
         self.current_patient_id = None
         self.patient_info = None
+        # 重置时间同步相关属性
+        self.reference_timestamp = None
+        self.system_timestamp = None
+        self.time_offset = None
         print("[SessionManager] Session state reset")
         
     def _get_next_patient_id(self):
@@ -99,10 +111,42 @@ class SessionManager:
         
         return max_id
         
+    def set_reference_time(self, reference_timestamp):
+        """设置基准时间戳并计算时间差"""
+        self.reference_timestamp = float(reference_timestamp)
+        self.system_timestamp = time.time()
+        self.time_offset = self.reference_timestamp - self.system_timestamp
+        print(f"[SessionManager] Time sync set: reference={self.reference_timestamp}, system={self.system_timestamp}, offset={self.time_offset}")
+    
+    def get_time_offset(self):
+        """获取时间偏移量"""
+        return self.time_offset
+    
+    def convert_system_to_reference_time(self, system_timestamp):
+        """将系统时间戳转换为基准时间戳"""
+        if self.time_offset is None:
+            print("[SessionManager] Warning: No time offset set, using original timestamp")
+            return system_timestamp
+        return system_timestamp + self.time_offset
+        
     def create_new_session(self, patient_info=None):
         """创建新的会话目录"""
-        # 先重置之前的会话状态
-        self.reset_session()
+        # 保存当前的时间同步信息
+        saved_reference_timestamp = self.reference_timestamp
+        saved_system_timestamp = self.system_timestamp
+        saved_time_offset = self.time_offset
+        
+        # 先重置之前的会话状态（但不重置时间同步信息）
+        self.current_session_dir = None
+        self.current_patient_id = None
+        self.patient_info = None
+        
+        # 恢复时间同步信息
+        self.reference_timestamp = saved_reference_timestamp
+        self.system_timestamp = saved_system_timestamp
+        self.time_offset = saved_time_offset
+        
+        print("[SessionManager] Session state reset (time sync preserved)")
         
         # 获取下一个病人ID
         patient_id = self._get_next_patient_id()
@@ -126,6 +170,8 @@ class SessionManager:
             self._save_patient_info(patient_info, timestamp)
         
         print(f"[SessionManager] Created new session: {session_dir}")
+        if self.time_offset is not None:
+            print(f"[SessionManager] Time sync preserved: offset={self.time_offset}")
         return session_dir
     
     def _save_patient_info(self, patient_info, timestamp):
@@ -264,6 +310,12 @@ class BluetoothHandler:
         try:
             # 重置当前会话跟踪
             self.current_upload_session = None
+            
+            # 设置基准时间戳（从接收到的JSON中提取的时间戳）
+            if timestamp is not None:
+                self.session_manager.set_reference_time(timestamp)
+            else:
+                print("[BluetoothHandler] Warning: No timestamp provided in start_capture command")
             
             # 创建新的会话目录
             session_dir = self.session_manager.create_new_session(patient_info)
@@ -509,6 +561,9 @@ class BluetoothHandler:
     def set_pipeline(self, pipeline):
         """Set the pipeline reference"""
         self.pipeline = pipeline
+        # 为Pipeline设置SessionManager引用
+        if self.pipeline:
+            self.pipeline.session_manager = self.session_manager
 
     def get_session_manager(self):
         """获取会话管理器"""
@@ -516,7 +571,7 @@ class BluetoothHandler:
 
 
 class Pipeline:
-    def __init__(self, config: dict) -> None:
+    def __init__(self, config: dict, session_manager=None) -> None:
         self.config = config
         self.capture = config["capture"]
         self.preprocess = config["preprocess"]
@@ -526,6 +581,7 @@ class Pipeline:
         self.interrupt_hotkey = config["interrupt_hotkey"]
         self.log = config["log"]
         self.perip_manager = config["perip_manager"]
+        self.session_manager = session_manager  # 添加会话管理器引用
         self.frame_queue = queue.Queue(maxsize=config["max_queue_size"])
         self.ir_frame_queue = queue.Queue(maxsize=config["max_queue_size"])
         self.preprocess_queue = queue.Queue(maxsize=config["max_queue_size"])
@@ -1227,10 +1283,42 @@ class Pipeline:
         else:
             print(f"[Pipeline] Timeout waiting for log queues to empty after {max_wait_time}s")
         
-        # 第四阶段：停止所有线程，保存和归一化
+        # 第四阶段：停止所有线程，转换时间戳，保存和归一化
         print("[Pipeline] Stage 4: Stopping all threads and finalizing...")
         global_vars.pipeline_running = False
         print("[Pipeline] Set pipeline_running to False, allowing all threads to exit")
+        
+        # 在文件合并前进行时间戳转换
+        if self.session_manager and self.session_manager.get_time_offset() is not None:
+            print("[Pipeline] Converting timestamps to reference time...")
+            try:
+                current_session_dir = self.session_manager.get_current_session_dir()
+                if current_session_dir:
+                    time_offset = self.session_manager.get_time_offset()
+                    converter = TimestampConverter(time_offset)
+                    
+                    # 转换当前会话的所有时间戳
+                    conversion_success = converter.convert_session_files(current_session_dir)
+                    if conversion_success:
+                        print("[Pipeline] Timestamp conversion completed successfully")
+                        
+                        # 验证转换结果（可选）
+                        if self.log:
+                            print("[Pipeline] Verifying timestamp conversion...")
+                            for filename in ["ecg_log.csv", "rppg_log.csv", "log.csv"]:
+                                file_path = os.path.join(current_session_dir, filename)
+                                if os.path.exists(file_path):
+                                    converter.verify_conversion(file_path)
+                    else:
+                        print("[Pipeline] Warning: Some timestamp conversions failed")
+                else:
+                    print("[Pipeline] Warning: No current session directory for timestamp conversion")
+            except Exception as e:
+                print(f"[Pipeline] Error during timestamp conversion: {e}")
+                import traceback
+                traceback.print_exc()
+        else:
+            print("[Pipeline] No time offset available, skipping timestamp conversion")
         
         # 继续执行文件合并和归一化
         try:
@@ -1420,6 +1508,8 @@ def main():
 
     print("[Main] Loading Bluetooth...")
     bluetooth_handler = BluetoothHandler(pipeline, peripmanager)
+    # 在设置pipeline后，会自动设置session_manager引用
+    bluetooth_handler.set_pipeline(pipeline)
     bluetooth_handler.start()
     print("[Main] Loading Bluetooth...Done")
 
