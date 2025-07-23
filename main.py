@@ -7,8 +7,6 @@ import os
 import csv
 import json
 import gc
-import pickle
-import traceback
 from datetime import datetime
 from scipy.signal import butter, filtfilt, welch
 
