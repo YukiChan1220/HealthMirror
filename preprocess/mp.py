@@ -1,7 +1,8 @@
-from queue import Queue, Full
+from queue import Queue, Full, Empty
 import mediapipe as mp
 import numpy as np
 import cv2
+import time
 from typing import Any
 import global_vars
 from .base import PreprocessBase
@@ -62,25 +63,36 @@ class MediaPipePreprocess(PreprocessBase):
         timestamps = []
         size = 0
         while global_vars.pipeline_running:
-            frame, timestamp = frame_queue.get()
-            preprocessed, raw = self.crop_resize(frame, self.target_size)
-            if preprocessed is not None:
-                cropped_frames.append(preprocessed)
-                timestamps.append(timestamp)
-                size += 1
-            if size >= batch_size:
-                if preprocess_queue is not None:
+            try:
+                # 使用超时避免无限阻塞
+                frame, timestamp = frame_queue.get(timeout=0.5)
+                preprocessed, raw = self.crop_resize(frame, self.target_size)
+                if preprocessed is not None:
+                    cropped_frames.append(preprocessed)
+                    timestamps.append(timestamp)
+                    size += 1
+                if size >= batch_size:
+                    if preprocess_queue is not None:
+                        try:
+                            preprocess_queue.put((cropped_frames, timestamps), timeout=0.1)
+                        except Full:
+                            print("[Preprocess] Warning: preprocess_queue is full, dropping batch")
                     try:
-                        preprocess_queue.put((cropped_frames, timestamps), timeout=0.1)
+                        log_queue.put((cropped_frames, timestamps), timeout=0.1)
                     except Full:
-                        print("[Preprocess] Warning: preprocess_queue is full, dropping batch")
-                try:
-                    log_queue.put((cropped_frames, timestamps), timeout=0.1)
-                except Full:
-                    print("[Preprocess] Warning: log_queue is full, dropping batch")
-                cropped_frames = []
-                timestamps = []
-                size = 0
+                        print("[Preprocess] Warning: log_queue is full, dropping batch")
+                    cropped_frames = []
+                    timestamps = []
+                    size = 0
+            except Empty:
+                # 队列为空时，短暂休眠后继续检查退出条件
+                time.sleep(0.01)
+                continue
+            except Exception as e:
+                # 其他异常时记录错误并继续
+                print(f"[Preprocess] Error in preprocessing: {e}")
+                time.sleep(0.01)
+                continue
         
         # 处理剩余的数据
         if size > 0:

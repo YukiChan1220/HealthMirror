@@ -1320,7 +1320,7 @@ class Pipeline:
         # 清理外设显示
         try:
             if self.perip_manager:
-                self.perip_manager.refresh_display(0)
+                self.perip_manager.refresh_display(1111)
                 print("[Pipeline] Display cleared")
         except Exception as e:
             print(f"[Pipeline] Error clearing display: {e}")
@@ -1420,6 +1420,7 @@ class Pipeline:
         time.sleep(1)
         self.clear()
         print("[Pipeline] Pipeline stopped")
+        self.perip_manager.refresh_display(0)  # 清理显示
 
     def clear(self):
         # 首先清理队列，确保线程能够正常退出
