@@ -1,4 +1,4 @@
-from queue import Queue
+from queue import Queue, Full
 import mediapipe as mp
 import numpy as np
 import cv2
@@ -70,11 +70,29 @@ class MediaPipePreprocess(PreprocessBase):
                 size += 1
             if size >= batch_size:
                 if preprocess_queue is not None:
-                    preprocess_queue.put((cropped_frames, timestamps))
-                log_queue.put((cropped_frames, timestamps))
+                    try:
+                        preprocess_queue.put((cropped_frames, timestamps), timeout=0.1)
+                    except Full:
+                        print("[Preprocess] Warning: preprocess_queue is full, dropping batch")
+                try:
+                    log_queue.put((cropped_frames, timestamps), timeout=0.1)
+                except Full:
+                    print("[Preprocess] Warning: log_queue is full, dropping batch")
                 cropped_frames = []
                 timestamps = []
                 size = 0
-
-
         
+        # 处理剩余的数据
+        if size > 0:
+            print(f"[Preprocess] Processing remaining {size} frames")
+            if preprocess_queue is not None:
+                try:
+                    preprocess_queue.put((cropped_frames, timestamps), timeout=0.1)
+                except Full:
+                    print("[Preprocess] Warning: preprocess_queue is full, dropping final batch")
+            try:
+                log_queue.put((cropped_frames, timestamps), timeout=0.1)
+            except Full:
+                print("[Preprocess] Warning: log_queue is full, dropping final batch")
+
+        print("[Preprocess] Preprocessing thread stopped")

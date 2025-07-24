@@ -580,17 +580,23 @@ class Pipeline:
         self.log = config["log"]
         self.perip_manager = config["perip_manager"]
         self.session_manager = session_manager  # 添加会话管理器引用
-        self.frame_queue = queue.Queue(maxsize=config["max_queue_size"])
-        self.ir_frame_queue = queue.Queue(maxsize=config["max_queue_size"])
-        self.preprocess_queue = queue.Queue(maxsize=config["max_queue_size"])
+        # 为不同队列设置合适的大小
+        frame_queue_size = config.get("frame_queue_size", 128)  # 原始帧队列，较小
+        preprocess_queue_size = config.get("preprocess_queue_size", 128)  # 预处理队列，中等
+        log_queue_size = config.get("log_queue_size", 512)  # 日志队列，较大
+        ecg_queue_size = config.get("ecg_queue_size", 1024)  # ECG队列，最大
+        
+        self.frame_queue = queue.Queue(maxsize=frame_queue_size)
+        self.ir_frame_queue = queue.Queue(maxsize=frame_queue_size)
+        self.preprocess_queue = queue.Queue(maxsize=preprocess_queue_size)
         self.result_queue = queue.Queue(maxsize=config["max_queue_size"])
-        self.log_result_queue = queue.Queue(maxsize=config["max_queue_size"])
+        self.log_result_queue = queue.Queue(maxsize=log_queue_size)
         self.main_queue = queue.Queue(maxsize=config["max_queue_size"])
-        self.log_queue = queue.Queue(maxsize=config["max_queue_size"])
-        self.ir_log_queue = queue.Queue(maxsize=config["max_queue_size"])
-        self.raw_ecg_queue = queue.Queue(maxsize=config["max_queue_size"])
+        self.log_queue = queue.Queue(maxsize=log_queue_size)
+        self.ir_log_queue = queue.Queue(maxsize=log_queue_size)
+        self.raw_ecg_queue = queue.Queue(maxsize=ecg_queue_size)
         self.display_queue = queue.Queue(maxsize=config["max_queue_size"])
-        self.monitor_ecg_queue = queue.Queue(maxsize=config["max_queue_size"])
+        self.monitor_ecg_queue = queue.Queue(maxsize=ecg_queue_size)
         self.inference_results = []
         self.max_display_points = config["max_display_points"]
         self.time_limit = config["time_limit"]
@@ -604,13 +610,14 @@ class Pipeline:
         self.cached_frames = []  # 存储预处理后的图像数据
         self.cached_timestamps = []  # 存储对应的时间戳
         self.cache_lock = threading.Lock()  # 线程安全锁
+        self.max_cached_frames = config.get("max_cached_frames", 18000)  # 限制缓存帧数（约10分钟@30fps）
         # 添加显示相关属性
         self.last_display_update = 0
         self.display_update_interval = 1.0  # 每1秒更新一次显示
         
         # 添加ECG质量监测相关属性
         self.ecg_buffer = []
-        self.ecg_window_size = config.get("ecg_window_size", 512)  # 1 sec
+        self.ecg_window_size = config.get("ecg_window_size", 1024)  # 1 sec
         self.ecg_quality = "normal"  # 初始质量状态
         self.ecg_quality_thresholds = {
             "normal": 6000,    # 极差小于5000为正常
@@ -631,6 +638,16 @@ class Pipeline:
         
         # 添加ECG调试信息控制标志
         self.enable_ecg_debug_output = True  # 控制ECG Range等调试信息的输出
+
+        # 添加队列监控相关属性
+        self.enable_queue_monitoring = config.get("enable_queue_monitoring", True)
+        self.queue_monitor_interval = config.get("queue_monitor_interval", 3.0)  # 每5秒监控一次
+        self.last_queue_monitor = 0
+        
+        # 添加缓存日志控制属性
+        self.cache_log_interval = config.get("cache_log_interval", 3.0)  # 每10秒输出一次缓存信息
+        self.last_cache_log = 0
+        self.cache_frame_count = 0  # 累计缓存的帧数
 
         # 初始化日志记录器（默认路径，会在启动时更新）
         self.ecglogger = DataLogger({
@@ -741,18 +758,33 @@ class Pipeline:
             try:
                 frames, timestamps = preprocess_queue.get(timeout=0.5)
                 with self.cache_lock:
+                    # 检查是否已达到最大缓存限制
+                    if len(self.cached_frames) >= self.max_cached_frames:
+                        print(f"[Pipeline] Warning: Cached frames limit reached ({self.max_cached_frames}), dropping oldest frames")
+                        # 移除最旧的帧以腾出空间
+                        frames_to_remove = len(frames)
+                        self.cached_frames = self.cached_frames[frames_to_remove:]
+                        self.cached_timestamps = self.cached_timestamps[frames_to_remove:]
+                    
                     # 将batch数据逐个添加到缓存中
                     for frame, timestamp in zip(frames, timestamps):
                         self.cached_frames.append(frame)
                         self.cached_timestamps.append(timestamp)
-                if self.log:
-                    print(f"[Pipeline] Cached {len(frames)} frames, total cached: {len(self.cached_frames)}")
+                    
+                    # 更新累计缓存帧数
+                    self.cache_frame_count += len(frames)
+                        
+                # 控制缓存日志输出频率
+                current_time = time.time()
+                if self.log and (current_time - self.last_cache_log >= self.cache_log_interval):
+                    print(f"[Pipeline] Cached {self.cache_frame_count} frames total, current total: {len(self.cached_frames)}")
+                    self.last_cache_log = current_time
+                    self.cache_frame_count = 0  # 重置累计计数
             except queue.Empty:
                 time.sleep(0.01)
                 continue
             except Exception as e:
                 print(f"[Pipeline] Error in cache_preprocessed_data: {e}")
-                time.sleep(0.1)
                 time.sleep(0.1)
 
     def batch_inference_cached_data(self):
@@ -976,10 +1008,66 @@ class Pipeline:
                 print(f"[Pipeline] Error in exchange_data: {e}")
                 time.sleep(0.1)
 
+    def monitor_queue_status(self):
+        """监控队列状态，检测潜在的阻塞问题"""
+        if not self.enable_queue_monitoring:
+            return
+            
+        current_time = time.time()
+        if current_time - self.last_queue_monitor < self.queue_monitor_interval:
+            return
+            
+        try:
+            queue_status = {
+                "frame_queue": self.frame_queue.qsize(),
+                "ir_frame_queue": self.ir_frame_queue.qsize(),
+                "preprocess_queue": self.preprocess_queue.qsize(),
+                "log_queue": self.log_queue.qsize(),
+                "ir_log_queue": self.ir_log_queue.qsize(),
+                "raw_ecg_queue": self.raw_ecg_queue.qsize(),
+                "monitor_ecg_queue": self.monitor_ecg_queue.qsize(),
+                "log_result_queue": self.log_result_queue.qsize(),
+            }
+            
+            # 检查是否有队列接近满载
+            warnings = []
+            for queue_name, size in queue_status.items():
+                queue_obj = getattr(self, queue_name)
+                if hasattr(queue_obj, '_maxsize') and queue_obj._maxsize > 0:
+                    usage_percent = (size / queue_obj._maxsize) * 100
+                    if usage_percent > 80:
+                        warnings.append(f"{queue_name}: {size}/{queue_obj._maxsize} ({usage_percent:.1f}%)")
+            
+            # 显示队列状态
+            if warnings:
+                print(f"[Pipeline] Queue warnings: {', '.join(warnings)}")
+            elif self.log:
+                active_queues = [f"{name}: {size}" for name, size in queue_status.items() if size > 0]
+                if active_queues:
+                    print(f"[Pipeline] Queue status: {', '.join(active_queues)}")
+            
+            # 显示缓存状态
+            with self.cache_lock:
+                cached_count = len(self.cached_frames)
+                if cached_count > 0:
+                    cache_usage = (cached_count / self.max_cached_frames) * 100
+                    if cache_usage > 80:
+                        print(f"[Pipeline] Cache warning: {cached_count}/{self.max_cached_frames} frames ({cache_usage:.1f}%)")
+                    elif self.log:
+                        print(f"[Pipeline] Cached frames: {cached_count}/{self.max_cached_frames} ({cache_usage:.1f}%)")
+            
+            self.last_queue_monitor = current_time
+            
+        except Exception as e:
+            print(f"[Pipeline] Error monitoring queue status: {e}")
+
     def results(self) -> None:
         """处理实时ECG质量监测和心率计算，但不处理rPPG推理结果"""
         while global_vars.pipeline_running and global_vars.data_acquisition_running:
             try:
+                # 监控队列状态
+                self.monitor_queue_status()
+                
                 # 处理ECG质量监测和心率计算
                 self._process_ecg_quality()
                 
@@ -1419,13 +1507,18 @@ class Pipeline:
         
         # 清理缓存数据
         with self.cache_lock:
-            self.cached_frames = []
-            self.cached_timestamps = []
-        print(f"[Pipeline] Cleared cached data")
+            cached_count = len(self.cached_frames)
+            self.cached_frames.clear()  # 使用clear()更高效
+            self.cached_timestamps.clear()
+            print(f"[Pipeline] Cleared {cached_count} cached frames and timestamps")
 
         self.last_display_update = 0
         self.last_ecg_quality_display = 0
+        self.last_queue_monitor = 0  # 重置队列监控时间
+        self.last_cache_log = 0  # 重置缓存日志时间
+        self.cache_frame_count = 0  # 重置累计缓存帧数
         
+        # 强制垃圾回收
         collected = gc.collect()
         print(f"[Pipeline] Garbage collector collected {collected} objects")
 
@@ -1494,6 +1587,14 @@ def main():
         "ecg": ecg,
         "interrupt_hotkey": "esc",
         "max_queue_size": 512,
+        "frame_queue_size": 32,
+        "preprocess_queue_size": 64,
+        "log_queue_size": 256,
+        "ecg_queue_size": 1024,
+        "max_cached_frames": 18000,  # 约10分钟@30fps
+        "enable_queue_monitoring": True,
+        "queue_monitor_interval": 5.0,
+        "cache_log_interval": 10.0,  # 每10秒输出一次缓存信息
         "batch_size": batch_size,
         "max_display_points": 128,
         "time_limit": time_limit,

@@ -42,12 +42,12 @@ class CameraCapture(CaptureBase):
                 # 检查队列是否已满，避免阻塞
                 if frame_queue.full():
                     print("[Camera] Frame queue is full, skipping frame")
-                    time.sleep(0.001)  # 短暂休眠避免忙等
+                    time.sleep(0.1)  # 短暂休眠避免忙等
                     continue
                 
                 if ir_frame_queue.full():
                     print("[Camera] IR frame queue is full, skipping frame")
-                    time.sleep(0.001)  # 短暂休眠避免忙等
+                    time.sleep(0.1)  # 短暂休眠避免忙等
                     continue
                 
                 # 读取RGB帧
