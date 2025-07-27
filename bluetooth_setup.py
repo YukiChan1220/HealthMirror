@@ -43,10 +43,12 @@ class SerialSPP:
         status = self.send_command('AT+RESET')
         status += self.send_command(f'AT+BAUD{self.baudrate[self.init_baudrate]}')
         status += self.send_command(f'AT+NAME{self.device_name}')
+        status = self.send_command('AT+RESET')
         return status
     
     def __call__(self):
         return self.init_spp()
 
 
-serialSPP = SerialSPP("HealthMirror", "/dev/ttyS1", 9600, 115200)
+serialSPP = SerialSPP("HealthMirror01", "/dev/ttyS4", 115200, 115200)
+serialSPP.init_spp()

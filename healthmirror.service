@@ -1,0 +1,18 @@
+[Unit]
+Description=HealthMirror Python Application
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/HealthMirror
+ExecStart=/root/HealthMirror/.venv/bin/python /root/HealthMirror/main.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+
+# Paste into /etc/systemd/system/healthmirror.service
+# sudo systemctl daemon-reload
+# sudo systemctl restart healthmirror.service
