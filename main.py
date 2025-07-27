@@ -32,10 +32,15 @@ def bandpass_filter(data, lowcut=0.5, highcut=3, fs=30, order=3):
     b, a = butter(order, [lowcut, highcut], fs=fs, btype='band')
     return filtfilt(b, a, data)
 
-
 def get_hr(y, sr=30, min=30, max=180):
     f, Pxx = welch(y, sr, nfft=1e5 / sr, nperseg=np.min((len(y) - 1, 256)))
     return f[(f > min / 60) & (f < max / 60)][np.argmax(Pxx[(f > min / 60) & (f < max / 60)])] * 60
+
+def handle_thread_exception(args):
+    print(f"[FATAL] Thread {args.thread.name} crashed: {args.exc_value}")
+    os._exit(1)
+
+threading.excepthook = handle_thread_exception
 
 class SessionManager:
     """管理会话数据的类"""
@@ -466,7 +471,7 @@ class BluetoothHandler:
                     battery_level = 70
             
             # 获取剩余空间（假设总空间为4096MB）
-            total_space = 4096
+            total_space = 16384
             used_space = self.session_manager.get_total_space_used()
             space_remaining = max(0, total_space - used_space)
             

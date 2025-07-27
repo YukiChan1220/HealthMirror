@@ -4,6 +4,7 @@ import sys
 import time
 from .base import CaptureBase
 import global_vars
+import os
 
 
 class CameraCapture(CaptureBase):
@@ -28,11 +29,13 @@ class CameraCapture(CaptureBase):
         
         # 再次检查摄像头状态
         if not self.cap or not self.cap.isOpened():
-            print("[Camera] RGB camera is not available or not opened")
+            print("[FATAL] [Camera] RGB camera is not available or not opened")
+            os._exit(1)
             return
             
         if not self.ir_cap or not self.ir_cap.isOpened():
-            print("[Camera] IR camera is not available or not opened")
+            print("[FATAL] [Camera] IR camera is not available or not opened")
+            os._exit(1)
             return
         
         print("[Camera] Cameras initialized successfully, starting capture loop")
@@ -41,13 +44,17 @@ class CameraCapture(CaptureBase):
             while global_vars.pipeline_running and global_vars.data_acquisition_running and self.cap.isOpened() and self.ir_cap.isOpened():
                 # 检查队列是否已满，避免阻塞
                 if frame_queue.full():
-                    print("[Camera] Frame queue is full, skipping frame")
-                    time.sleep(0.1)  # 短暂休眠避免忙等
+                    print("[FATAL] [Camera] Frame queue is full, skipping frame")
+                    time.sleep(0.5)  # 短暂休眠避免忙等
+                    if frame_queue.full():
+                        os._exit(1)  # 如果队列仍然满，退出程序
                     continue
                 
                 if ir_frame_queue.full():
-                    print("[Camera] IR frame queue is full, skipping frame")
-                    time.sleep(0.1)  # 短暂休眠避免忙等
+                    print("[FATAL] [Camera] IR frame queue is full, skipping frame")
+                    time.sleep(0.5)  # 短暂休眠避免忙等
+                    if frame_queue.full():
+                        os._exit(1)  # 如果队列仍然满，退出程序
                     continue
                 
                 # 读取RGB帧
@@ -56,7 +63,11 @@ class CameraCapture(CaptureBase):
                     timestamp = time.time()
                     if not success:
                         print("[Camera] Unable to read a frame", file=sys.stderr)
-                        time.sleep(0.001)  # 短暂休眠避免忙等
+                        time.sleep(0.5)  # 短暂休眠避免忙等
+                        success, frame = self.cap.read()  # 再次尝试读取
+                        if not success:
+                            print("[FATAL] [Camera] Unable to read a frame after retry")
+                            os._exit(1)  # 如果仍然失败，退出程序
                         continue
                     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     
@@ -69,7 +80,7 @@ class CameraCapture(CaptureBase):
                         
                 except Exception as e:
                     print(f"[Camera] Error reading RGB frame: {e}")
-                    time.sleep(0.001)
+                    time.sleep(0.01)
                     continue
 
                 # 读取IR帧
@@ -78,7 +89,12 @@ class CameraCapture(CaptureBase):
                     timestamp = time.time()
                     if not success:
                         print("[Camera] Unable to read an IR frame", file=sys.stderr)
-                        time.sleep(0.001)  # 短暂休眠避免忙等
+                        time.sleep(0.5)  # 短暂休眠避免忙等
+                        success, ir_frame = self.ir_cap.read()  # 再次尝试读取
+                        if not success:
+                            print("[FATAL] [Camera] Unable to read an IR frame after retry")
+                            os._exit(1)  # 如果仍然失败，退出程序
+                        continue
                         continue
                     ir_frame = cv2.cvtColor(ir_frame, cv2.COLOR_BGR2RGB) # TODO: color conversion may not be necessary for IR frames
                     
@@ -91,14 +107,15 @@ class CameraCapture(CaptureBase):
                         
                 except Exception as e:
                     print(f"[Camera] Error reading IR frame: {e}")
-                    time.sleep(0.001)
+                    time.sleep(0.01)
                     continue
                 
                 # 防止CPU过载
                 time.sleep(0.001)
                 
         except Exception as e:
-            print(f"[Camera] Critical error in camera capture: {e}")
+            print(f"[FATAL] [Camera] Error in camera capture: {e}")
+            os._exit(1)  # 如果发生严重错误，退出程序
         finally:
             print("[Camera] Camera capture thread finished")
     
@@ -142,13 +159,16 @@ class CameraCapture(CaptureBase):
                     print("[Camera] Cameras reinitialized successfully")
                     return True
                 else:
-                    print("[Camera] Failed to reinitialize cameras")
+                    print("[FATAL] [Camera] Failed to reinitialize cameras")
+                    os._exit(1)  # 如果摄像头无法重新初始化，退出程序
                     return False
             except Exception as e:
-                print(f"[Camera] Error reinitializing cameras: {e}")
+                print(f"[FATAL] [Camera] Error reinitializing cameras: {e}")
+                os._exit(1)
                 return False
         else:
-            print("[Camera] Camera paths not available for reinitialization")
+            print("[FATAL] [Camera] Camera paths not available for reinitialization")
+            os._exit(1)
             return False
     
     def set_camera_paths(self, rgb_cam_path, ir_cam_path):
