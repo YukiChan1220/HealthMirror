@@ -469,9 +469,9 @@ class BluetoothHandler:
                 except Exception as e:
                     print(f"[BluetoothHandler] Error getting battery level: {e}")
                     battery_level = 70
-            
-            # 获取剩余空间（假设总空间为4096MB）
-            total_space = 16384
+
+            # 获取剩余空间（假设总空间为40960MB）
+            total_space = 40960
             used_space = self.session_manager.get_total_space_used()
             space_remaining = max(0, total_space - used_space)
             
