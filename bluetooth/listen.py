@@ -5,11 +5,17 @@ from queue import Queue
 import json
 import time
 import threading
+import os
 
 class Bluetooth(BluetoothBase):
     def __init__(self):
         # TODO: ? super().__init__()
-        self.serialSPP = SerialSPP("HealthMirror01", "/dev/ttyS4", 115200, 115200)
+        try:
+            self.serialSPP = SerialSPP("HealthMirror01", "/dev/ttyS4", 115200, 115200)
+        except Exception as e:
+            print(f"[FATAL] [Bluetooth] Failed to initialize SerialSPP: {e}, exiting")
+            os._exit(1)  # Exit if SerialSPP initialization fails
+            self.serialSPP = None
         cmd_failed = self.serialSPP()
         if cmd_failed == 0:
             print("[Bluetooth] SPP module initialized successfully.")
@@ -30,12 +36,12 @@ class Bluetooth(BluetoothBase):
                             json_data = json.loads(data)
                             rx_data.put(json_data)
                             global_vars.bluetooth_interrupt = True
-                            print(f"Received data: {json_data}")
+                            print(f"[Bluetooth] Received data: {json_data}")
                         except json.JSONDecodeError:
                             print("[Bluetooth] Failed to decode JSON data")
                 else:
                     # 没有数据时休眠，减少CPU占用
-                    time.sleep(0.02)  # 10ms休眠
+                    time.sleep(0.02)  # 20ms休眠
             except Exception as e:
                 print(f"[Bluetooth] Error in listen loop: {e}")
                 time.sleep(0.1)  # 出错时休眠更长时间

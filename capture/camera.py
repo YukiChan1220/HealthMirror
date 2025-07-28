@@ -24,17 +24,17 @@ class CameraCapture(CaptureBase):
         if not self.cap or not self.cap.isOpened() or not self.ir_cap or not self.ir_cap.isOpened():
             print("[Camera] Cameras not available, attempting to reinitialize...")
             if not self.reinitialize_cameras():
-                print("[Camera] Failed to reinitialize cameras, aborting capture")
+                print("[FATAL] [Camera] Failed to reinitialize cameras, aborting capture")
                 return
         
         # 再次检查摄像头状态
         if not self.cap or not self.cap.isOpened():
-            print("[FATAL] [Camera] RGB camera is not available or not opened")
+            print("[FATAL] [Camera] RGB camera is not available or not opened, exiting")
             os._exit(1)
             return
             
         if not self.ir_cap or not self.ir_cap.isOpened():
-            print("[FATAL] [Camera] IR camera is not available or not opened")
+            print("[FATAL] [Camera] IR camera is not available or not opened, exiting")
             os._exit(1)
             return
         
@@ -44,16 +44,18 @@ class CameraCapture(CaptureBase):
             while global_vars.pipeline_running and global_vars.data_acquisition_running and self.cap.isOpened() and self.ir_cap.isOpened():
                 # 检查队列是否已满，避免阻塞
                 if frame_queue.full():
-                    print("[FATAL] [Camera] Frame queue is full, skipping frame")
+                    print("[Camera] Frame queue is full, skipping frame")
                     time.sleep(0.5)  # 短暂休眠避免忙等
                     if frame_queue.full():
+                        print("[FATAL] [Camera] Frame queue is still full, exiting")
                         os._exit(1)  # 如果队列仍然满，退出程序
                     continue
                 
                 if ir_frame_queue.full():
-                    print("[FATAL] [Camera] IR frame queue is full, skipping frame")
+                    print("[Camera] IR frame queue is full, skipping frame")
                     time.sleep(0.5)  # 短暂休眠避免忙等
-                    if frame_queue.full():
+                    if ir_frame_queue.full():
+                        print("[FATAL] [Camera] IR frame queue is still full, exiting")
                         os._exit(1)  # 如果队列仍然满，退出程序
                     continue
                 

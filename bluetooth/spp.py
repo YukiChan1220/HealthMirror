@@ -36,7 +36,7 @@ class SerialSPP:
             return 0
         else:
             print(f"[Bluetooth] Command failed: {command}, Response: {response}")
-            return -1
+            return 1
         
 
     def init_spp(self) -> int:

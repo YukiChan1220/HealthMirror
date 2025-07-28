@@ -1,7 +1,7 @@
 import threading
 import serial
 import time
-
+import os
 
 class BMD101:
     def __init__(self, serial_port):
@@ -19,7 +19,8 @@ class BMD101:
             
             
         except Exception as e:
-            print("Serial unavailable {}: {}".format(serial_port, e))
+            print("[FATAL] [BMD101] Serial unavailable {}: {}, exiting".format(serial_port, e))
+            os._exit(1)  # Exit if serial port initialization fails
             return
         
     def flush_buffer(self):
