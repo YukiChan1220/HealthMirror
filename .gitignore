@@ -13,3 +13,5 @@ ecg_log.csv
 images/
 ir_images/
 *.pyc
+bluetooth_setup.py
+bluetooth/listen.py
