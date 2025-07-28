@@ -1146,7 +1146,17 @@ class Pipeline:
             current_time = time.time()
             # 改进逻辑：允许在数据不足时也进行心率计算，但需要最少2秒的数据
             min_data_for_calculation = int(self.ecg_sampling_rate * 2)  # 最少2秒数据
-            if (current_time - self.last_heart_rate_calculation >= self.heart_rate_calculation_interval and
+            
+            # 动态计算间隔：初期更频繁，后期稳定
+            data_duration = len(self.heart_rate_calculation_buffer) / self.ecg_sampling_rate
+            if data_duration < 5:
+                dynamic_interval = 1.0  # 前5秒每1秒计算一次
+            elif data_duration < 10:
+                dynamic_interval = 1.5  # 5-10秒每1.5秒计算一次
+            else:
+                dynamic_interval = self.heart_rate_calculation_interval  # 10秒后按标准间隔
+            
+            if (current_time - self.last_heart_rate_calculation >= dynamic_interval and
                 len(self.heart_rate_calculation_buffer) >= min_data_for_calculation):
                 self._calculate_heart_rate()
                 self.last_heart_rate_calculation = current_time
@@ -1513,6 +1523,7 @@ class Pipeline:
         self.inference_results = []
         self.hr = None
         self.heart_rate_buffer = []  # Also clear the heart rate buffer
+        self.heart_rate_calculation_buffer = []  # 清空心率计算缓冲区
         self.ecg_buffer = []  # 清空ECG缓冲区
         self.ecg_quality = "normal"  # 重置ECG质量状态
         self.enable_ecg_debug_output = True  # 重置ECG调试输出标志
