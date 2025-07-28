@@ -635,7 +635,7 @@ class Pipeline:
         
         # 添加心率计算相关属性
         self.heart_rate_calculation_buffer = []  # 用于心率计算的ECG数据缓冲区
-        self.heart_rate_window_size = 1024  # 心率计算的窗口大小 (约2秒@512Hz)
+        self.heart_rate_window_size = 5120  # 心率计算的窗口大小 (约10秒@512Hz)
         self.last_heart_rate_calculation = 0
         self.heart_rate_calculation_interval = 2.0  # 每2秒计算一次心率
         self.current_heart_rate = 0  # 当前计算出的心率
@@ -1144,8 +1144,10 @@ class Pipeline:
             
             # 定期计算心率
             current_time = time.time()
+            # 改进逻辑：允许在数据不足时也进行心率计算，但需要最少2秒的数据
+            min_data_for_calculation = int(self.ecg_sampling_rate * 2)  # 最少2秒数据
             if (current_time - self.last_heart_rate_calculation >= self.heart_rate_calculation_interval and
-                len(self.heart_rate_calculation_buffer) >= self.heart_rate_window_size):
+                len(self.heart_rate_calculation_buffer) >= min_data_for_calculation):
                 self._calculate_heart_rate()
                 self.last_heart_rate_calculation = current_time
                     
@@ -1156,11 +1158,18 @@ class Pipeline:
     def _calculate_heart_rate(self):
         """从ECG数据计算心率"""
         try:
-            if len(self.heart_rate_calculation_buffer) < self.heart_rate_window_size:
+            # 改进逻辑：使用可用数据进行计算，最少需要2秒数据
+            min_data_for_calculation = int(self.ecg_sampling_rate * 2)  # 最少2秒数据
+            if len(self.heart_rate_calculation_buffer) < min_data_for_calculation:
                 return
             
-            # 获取ECG数据
-            ecg_data = np.array(self.heart_rate_calculation_buffer)
+            # 获取ECG数据 - 使用所有可用数据，但最多使用10秒窗口
+            data_length = min(len(self.heart_rate_calculation_buffer), self.heart_rate_window_size)
+            ecg_data = np.array(self.heart_rate_calculation_buffer[-data_length:])
+            
+            # 根据数据长度调整信心度
+            data_duration = data_length / self.ecg_sampling_rate
+            confidence_factor = min(1.0, data_duration / 10.0)  # 10秒时达到最大信心度
             
             # 简单的R峰检测算法
             # 1. 应用高通滤波去除基线漂移
@@ -1202,13 +1211,14 @@ class Pipeline:
                     self.update_heart_rate_display(heart_rate)
                     
                     if self.log:
-                        print(f"[Pipeline] Calculated heart rate: {heart_rate:.1f} BPM (from {len(peaks)} peaks)")
+                        confidence_info = f"confidence: {confidence_factor:.1%}" if confidence_factor < 1.0 else "full confidence"
+                        print(f"[Pipeline] Calculated heart rate: {heart_rate:.1f} BPM (from {len(peaks)} peaks, {data_duration:.1f}s data, {confidence_info})")
                 else:
                     if self.log:
-                        print(f"[Pipeline] Heart rate out of range: {heart_rate:.1f} BPM")
+                        print(f"[Pipeline] Heart rate out of range: {heart_rate:.1f} BPM (data: {data_duration:.1f}s)")
             else:
                 if self.log:
-                    print(f"[Pipeline] Insufficient R peaks detected: {len(peaks)}")
+                    print(f"[Pipeline] Insufficient R peaks detected: {len(peaks)} (data: {data_duration:.1f}s)")
                     
         except Exception as e:
             print(f"[Pipeline] Error calculating heart rate: {e}")
