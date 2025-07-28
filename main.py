@@ -1593,9 +1593,9 @@ def main():
         "ecg": ecg,
         "interrupt_hotkey": "esc",
         "max_queue_size": 512,
-        "frame_queue_size": 32,
-        "preprocess_queue_size": 64,
-        "log_queue_size": 256,
+        "frame_queue_size": 256,
+        "preprocess_queue_size": 256,
+        "log_queue_size": 512,
         "ecg_queue_size": 1024,
         "max_cached_frames": 18000,  # 约10分钟@30fps
         "enable_queue_monitoring": True,
