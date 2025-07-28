@@ -8,11 +8,11 @@ class ServerUploader:
     def __init__(self, server_config=None):
         # 默认服务器配置
         self.server_config = server_config or {
-            "host": "183.173.177.81",  # 替换为实际服务器IP
+            "host": "47.93.46.224",  # 替换为实际服务器IP
             "port": 22,
-            "username": "ssh_user",  # 替换为实际用户名
-            "password": "thu_ssh_opi_test",  # 替换为实际密码
-            "remote_path": "D:/health_mirror/",  # 修改为Linux路径格式
+            "username": "root",  # 替换为实际用户名
+            "password": "thu@PiServer!",  # 替换为实际密码
+            "remote_path": "/root/health_mirror/health_mirror_01",  # 修改为Linux路径格式
             "timeout": 30
         }
     
