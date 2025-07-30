@@ -631,11 +631,11 @@ class Pipeline:
         }
         # 在Pipeline.__init__方法中添加这些属性
         self.last_ecg_quality_display = 0
-        self.ecg_quality_display_interval = 1.0  # 每秒显示一次ECG质量信息
-        
+        self.ecg_quality_display_interval = 3.0  # 每3秒显示一次ECG质量信息
+
         # 添加心率计算相关属性
         self.heart_rate_calculation_buffer = []  # 用于心率计算的ECG数据缓冲区
-        self.heart_rate_window_size = 5120  # 心率计算的窗口大小 (约10秒@512Hz)
+        self.heart_rate_window_size = 10240  # 心率计算的窗口大小 (约10秒@512Hz)
         self.last_heart_rate_calculation = 0
         self.heart_rate_calculation_interval = 2.0  # 每2秒计算一次心率
         self.current_heart_rate = 0  # 当前计算出的心率
@@ -1179,7 +1179,7 @@ class Pipeline:
             
             # 根据数据长度调整信心度
             data_duration = data_length / self.ecg_sampling_rate
-            confidence_factor = min(1.0, data_duration / 10.0)  # 10秒时达到最大信心度
+            confidence_factor = min(1.0, data_duration / 20.0)  # 20秒时达到最大信心度
             
             # 简单的R峰检测算法
             # 1. 应用高通滤波去除基线漂移
@@ -1188,7 +1188,7 @@ class Pipeline:
             # 设计滤波器 (高通滤波，截止频率0.5Hz)
             nyquist = self.ecg_sampling_rate / 2
             low_cutoff = 0.5 / nyquist
-            high_cutoff = 40 / nyquist  # 低通滤波截止频率40Hz
+            high_cutoff = 40 / nyquist  # 低通滤波截止频率3Hz
             
             # 带通滤波器
             b, a = butter(3, [low_cutoff, high_cutoff], btype='band')
@@ -1198,8 +1198,8 @@ class Pipeline:
             from scipy.signal import find_peaks
             
             # 自适应阈值：使用数据的标准差
-            threshold = np.std(filtered_ecg) * 0.5
-            min_distance = int(self.ecg_sampling_rate * 0.4)  # 最小间隔0.4秒（对应150 BPM）
+            threshold = np.std(filtered_ecg) * 1.4
+            min_distance = int(self.ecg_sampling_rate * 0.3)  # 最小间隔0.4秒（对应150 BPM）
             
             # 找到R峰
             peaks, _ = find_peaks(filtered_ecg, height=threshold, distance=min_distance)

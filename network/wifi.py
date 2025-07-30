@@ -27,6 +27,11 @@ class WiFiManager:
             if validation_result["status"] != "success":
                 return validation_result
             
+            # Scan for available networks before attempting connection
+            scan_result = self._scan_networks()
+            if not self._is_network_available(ssid, scan_result):
+                return {"status": "failure", "message": f"Network '{ssid}' not found in scan results"}
+            
             # Delete existing connection
             self._delete_existing_connection(ssid)
             
@@ -68,6 +73,48 @@ class WiFiManager:
             )
         except Exception:
             pass  # Ignore errors if connection doesn't exist
+    
+    def _scan_networks(self):
+        """Scan for available WiFi networks"""
+        try:
+            self.logger.info("Scanning for available WiFi networks...")
+            result = subprocess.run(
+                ["nmcli", "device", "wifi", "rescan"],
+                capture_output=True, text=True, check=False
+            )
+            
+            # Wait a moment for scan to complete
+            time.sleep(2)
+            
+            # Get the scan results
+            scan_result = subprocess.run(
+                ["nmcli", "device", "wifi", "list"],
+                capture_output=True, text=True, check=True
+            )
+            
+            self.logger.info("Network scan completed")
+            return scan_result.stdout
+            
+        except subprocess.CalledProcessError as e:
+            self.logger.error(f"Failed to scan networks: {e}")
+            return ""
+        except Exception as e:
+            self.logger.error(f"Network scan error: {e}")
+            return ""
+    
+    def _is_network_available(self, ssid, scan_output):
+        """Check if network is available in scan results"""
+        if not scan_output:
+            return False
+        
+        # Check if SSID appears in scan output
+        for line in scan_output.split('\n'):
+            if ssid in line:
+                self.logger.info(f"Network '{ssid}' found in scan results")
+                return True
+        
+        self.logger.warning(f"Network '{ssid}' not found in scan results")
+        return False
     
     def _connect_open(self, ssid):
         """Connect to open network"""
@@ -158,11 +205,8 @@ class WiFiManager:
     def get_status(self):
         """Get current WiFi status and available networks"""
         try:
-            # Get available networks
-            networks_result = subprocess.run(
-                ["nmcli", "device", "wifi", "list", "--rescan", "no"],
-                capture_output=True, text=True, check=True
-            )
+            # Scan for available networks to get fresh results
+            networks_output = self._scan_networks()
             
             # Get active connections
             active_result = subprocess.run(
@@ -180,7 +224,7 @@ class WiFiManager:
             
             return {
                 "status": "success",
-                "available_networks": networks_result.stdout,
+                "available_networks": networks_output,
                 "active_connections": active_wifi
             }
             
