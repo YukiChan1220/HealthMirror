@@ -11,7 +11,7 @@ class Bluetooth(BluetoothBase):
     def __init__(self):
         # TODO: ? super().__init__()
         try:
-            self.serialSPP = SerialSPP("HealthMirror01", "/dev/ttyS4", 115200, 115200)
+            self.serialSPP = SerialSPP("HealthMirror02", "/dev/ttyS4", 115200, 115200)
         except Exception as e:
             print(f"[FATAL] [Bluetooth] Failed to initialize SerialSPP: {e}, exiting")
             os._exit(1)  # Exit if SerialSPP initialization fails

@@ -12,7 +12,7 @@ class ServerUploader:
             "port": 22,
             "username": "root",  # 替换为实际用户名
             "password": "thu@PiServer!",  # 替换为实际密码
-            "remote_path": "/root/health_mirror/health_mirror_01",  # 修改为Linux路径格式
+            "remote_path": "/root/health_mirror/health_mirror_02",  # 修改为Linux路径格式
             "timeout": 30
         }
     
@@ -179,7 +179,7 @@ class ServerUploader:
         
         for item in items:
             # 跳过隐藏文件和标记文件
-            if item.startswith('.'):
+            if item.startswith('.') or item.startswith('raw') or 'frame' in item:
                 continue
                 
             local_item = os.path.join(local_path, item)

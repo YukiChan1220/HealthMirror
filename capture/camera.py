@@ -17,7 +17,7 @@ class CameraCapture(CaptureBase):
         """停止数据采集"""
         print("[Camera] Stop capture requested")
 
-    def __call__(self, frame_queue: Queue, ir_frame_queue: Queue) -> None:
+    def __call__(self, frame_queue: Queue, frame_log_queue: Queue, ir_frame_queue: Queue, ir_frame_log_queue: Queue) -> None:
         print("[Camera] Starting camera capture thread")
         
         # 在每次采集开始时检查并重新初始化摄像头
@@ -38,24 +38,28 @@ class CameraCapture(CaptureBase):
             os._exit(1)
             return
         
+        self.cap.set(cv2.CAP_PROP_FPS, 30)
+        self.ir_cap.set(cv2.CAP_PROP_FPS, 30)
+        print(f"[Camera] [FPS] {self.cap.get(cv2.CAP_PROP_FPS)}, {self.ir_cap.get(cv2.CAP_PROP_FPS)}")
+
         print("[Camera] Cameras initialized successfully, starting capture loop")
         
         try:
             while global_vars.pipeline_running and global_vars.data_acquisition_running and self.cap.isOpened() and self.ir_cap.isOpened():
-                # 检查队列是否已满，避免阻塞
-                if frame_queue.full():
-                    print("[Camera] Frame queue is full, skipping frame")
+                # 检查所有队列是否已满，避免阻塞
+                if frame_queue.full() or frame_log_queue.full():
+                    print("[Camera] Frame queue(s) are full, skipping frame")
                     time.sleep(0.5)  # 短暂休眠避免忙等
-                    if frame_queue.full():
-                        print("[FATAL] [Camera] Frame queue is still full, exiting")
+                    if frame_queue.full() or frame_log_queue.full():
+                        print("[FATAL] [Camera] Frame queue(s) are still full, exiting")
                         os._exit(1)  # 如果队列仍然满，退出程序
                     continue
                 
-                if ir_frame_queue.full():
-                    print("[Camera] IR frame queue is full, skipping frame")
+                if ir_frame_queue.full() or ir_frame_log_queue.full():
+                    print("[Camera] IR frame queue(s) are full, skipping frame")
                     time.sleep(0.5)  # 短暂休眠避免忙等
-                    if ir_frame_queue.full():
-                        print("[FATAL] [Camera] IR frame queue is still full, exiting")
+                    if ir_frame_queue.full() or ir_frame_log_queue.full():
+                        print("[FATAL] [Camera] IR frame queue(s) are still full, exiting")
                         os._exit(1)  # 如果队列仍然满，退出程序
                     continue
                 
@@ -73,9 +77,10 @@ class CameraCapture(CaptureBase):
                         continue
                     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     
-                    # 非阻塞put，使用timeout
+                    # 同时放入frame_queue和frame_log_queue，使用非阻塞put
                     try:
                         frame_queue.put((frame, timestamp), timeout=0.1)
+                        # frame_log_queue.put(([frame], [timestamp]), timeout=0.1)
                     except:
                         print("[Camera] Frame queue put timeout, skipping frame")
                         continue
@@ -97,12 +102,12 @@ class CameraCapture(CaptureBase):
                             print("[FATAL] [Camera] Unable to read an IR frame after retry")
                             os._exit(1)  # 如果仍然失败，退出程序
                         continue
-                        continue
                     ir_frame = cv2.cvtColor(ir_frame, cv2.COLOR_BGR2RGB) # TODO: color conversion may not be necessary for IR frames
                     
-                    # 非阻塞put，使用timeout
+                    # 同时放入ir_frame_queue和ir_frame_log_queue，使用非阻塞put
                     try:
                         ir_frame_queue.put((ir_frame, timestamp), timeout=0.1)
+                        # ir_frame_log_queue.put(([ir_frame], [timestamp]), timeout=0.1)
                     except:
                         print("[Camera] IR frame queue put timeout, skipping frame")
                         continue
@@ -113,7 +118,7 @@ class CameraCapture(CaptureBase):
                     continue
                 
                 # 防止CPU过载
-                time.sleep(0.001)
+                # time.sleep(0.001)
                 
         except Exception as e:
             print(f"[FATAL] [Camera] Error in camera capture: {e}")

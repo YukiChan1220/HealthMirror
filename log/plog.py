@@ -7,12 +7,14 @@ import global_vars
 from queue import Queue
 import subprocess
 import glob
+import shutil
 
 class PictureLogger():
     def __init__(self, config: dict) -> None:
         self.video_path = config["video_path"]
         self.data_queue = config["data_queue"]
         self.image_path = config["image_path"]
+        self.image_type = config["image_type"]
         self.lock = threading.Lock()
 
         self.timestamps = []
@@ -24,11 +26,35 @@ class PictureLogger():
         os.makedirs(os.path.dirname(self.video_path), exist_ok=True)
 
     def save_image(self, index: int, image: np.ndarray, timestamp: float) -> None:
-        if image.max() <= 1.0:
-            image = (image * 255).astype(np.uint8)
-        if image.ndim == 3 and image.shape[2] == 4:
-            image = image[:, :, :3]
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        if self.image_type == "np":
+            # 处理numpy数组格式的图像（原有逻辑）
+            if image.max() <= 1.0:
+                image = (image * 255).astype(np.uint8)
+            if image.ndim == 3 and image.shape[2] == 4:
+                image = image[:, :, :3]
+            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        elif self.image_type == "raw":
+            # 处理cv2.RGB格式的图像，需要转换为BGR格式
+            # 确保图像是uint8格式
+            if image.dtype != np.uint8:
+                if image.max() <= 1.0:
+                    image = (image * 255).astype(np.uint8)
+                else:
+                    image = image.astype(np.uint8)
+            # 如果有alpha通道，移除它
+            if image.ndim == 3 and image.shape[2] == 4:
+                image = image[:, :, :3]
+            # 将RGB转换为BGR格式（cv2默认使用BGR）
+            if image.ndim == 3 and image.shape[2] == 3:
+                image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        else:
+            # 默认处理（保持原有逻辑）
+            if image.max() <= 1.0:
+                image = (image * 255).astype(np.uint8)
+            if image.ndim == 3 and image.shape[2] == 4:
+                image = image[:, :, :3]
+            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        
         filename = f"{self.image_path}/frame_{index:06d}.png"
         cv2.imwrite(filename, image)
         self.timestamps.append(timestamp)
@@ -64,6 +90,7 @@ class PictureLogger():
                 f.write(f"file 'frame_{i:06d}.png'\n")
                 f.write(f"duration {dt:.6f}\n")
             f.write(f"file 'frame_{self.frame_count - 1:06d}.png'\n")
+            f.write(f"duration 0.033\n")
 
         # 计算并打印帧率统计信息
         if self.frame_count > 1 and total_duration > 0:
@@ -101,6 +128,19 @@ class PictureLogger():
         
         cmd = [
             "ffmpeg",
+            "-fflags", "+genpts",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", "timestamps.txt",
+            "-c:v", "ffv1",       # 改成 FFV1 编码
+            "-level", "3",        # 使用 FFV1 第三版（更高压缩率和效率）
+            "-pix_fmt", "yuv444p",# 无损保色
+            "-vsync", "vfr",
+            abs_video_path        # 建议扩展名用 .mkv
+        ]
+
+        old_cmd = [
+            "ffmpeg",
             "-y",
             "-f", "concat",
             "-safe", "0",
@@ -131,7 +171,7 @@ class PictureLogger():
                 return
                 
             # 添加超时以防止FFmpeg挂起
-            result = subprocess.run(cmd, cwd=self.image_path, check=True, capture_output=True, text=True, timeout=10)
+            result = subprocess.run(cmd, cwd=self.image_path, check=True, capture_output=True, text=True, timeout=120)
             print("[PictureLogger] FFmpeg stdout:", result.stdout)
             if result.stderr:
                 print("[PictureLogger] FFmpeg stderr:", result.stderr)
@@ -156,7 +196,7 @@ class PictureLogger():
                     "-pix_fmt", "yuv420p",
                     abs_video_path
                 ]
-                result = subprocess.run(backup_cmd, cwd=self.image_path, check=True, capture_output=True, text=True, timeout=10)
+                result = subprocess.run(backup_cmd, cwd=self.image_path, check=True, capture_output=True, text=True, timeout=120)
                 print("[PictureLogger] Backup FFmpeg command succeeded")
             except subprocess.CalledProcessError as e2:
                 print(f"[PictureLogger] Backup command also failed: {e2}")
@@ -168,16 +208,15 @@ class PictureLogger():
             print("[PictureLogger] FFmpeg command timed out")
             return
 
-        # 清理文件
+        time.sleep(5)  # 等待FFmpeg完成写入
+        # 清理文件 - 直接删除整个image_path文件夹，然后重新创建
         try:
-            for file_path in glob.glob(os.path.join(self.image_path, "frame_*.png")):
-                try:
-                    os.remove(file_path)
-                except Exception as e:
-                    print(f"[PictureLogger] Error deleting file {file_path}: {e}")
+            # 删除整个image_path文件夹（包含所有文件）
+            if os.path.exists(self.image_path):
+                shutil.rmtree(self.image_path)
+                print(f"[PictureLogger] Deleted directory: {self.image_path}")
             
-            if os.path.exists(txt_path):
-                os.remove(txt_path)
+
                 
             self.timestamps.clear()
             self.frame_count = 0
@@ -211,6 +250,8 @@ class PictureLogger():
         except Exception as e:
             print(f"[PictureLogger] Error in main loop: {e}")
         
+        
+
         print(f"[PictureLogger] Finished processing. Saved {self.frame_count} images to {self.image_path}")
         
         # 创建视频

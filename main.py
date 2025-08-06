@@ -197,8 +197,8 @@ class SessionManager:
         
         return {
             "session_dir": self.current_session_dir,
-            "video_path": os.path.join(self.current_session_dir, "video.mp4"),
-            "ir_video_path": os.path.join(self.current_session_dir, "ir_video.mp4"),
+            "video_path": os.path.join(self.current_session_dir, "video.mkv"),
+            "ir_video_path": os.path.join(self.current_session_dir, "ir_video.mkv"),
             "images_dir": os.path.join(self.current_session_dir, "images"),
             "ir_images_dir": os.path.join(self.current_session_dir, "ir_images"),
             "ecg_log": os.path.join(self.current_session_dir, "ecg_log.csv"),
@@ -592,7 +592,9 @@ class Pipeline:
         ecg_queue_size = config.get("ecg_queue_size", 1024)  # ECG队列，最大
         
         self.frame_queue = queue.Queue(maxsize=frame_queue_size)
+        self.raw_frame_queue = queue.Queue(maxsize=frame_queue_size)
         self.ir_frame_queue = queue.Queue(maxsize=frame_queue_size)
+        self.raw_ir_frame_queue = queue.Queue(maxsize=frame_queue_size)
         self.preprocess_queue = queue.Queue(maxsize=preprocess_queue_size)
         self.result_queue = queue.Queue(maxsize=config["max_queue_size"])
         self.log_result_queue = queue.Queue(maxsize=log_queue_size)
@@ -665,17 +667,7 @@ class Pipeline:
         })
         self.filemerger = FileMerger(input_files=["./ecg_log.csv", "./rppg_log.csv"], output_path="merged_log.csv")
 
-        self.picturelogger = PictureLogger({
-            "video_path": "./video.mp4",
-            "data_queue": self.log_queue,
-            "image_path": "./images"
-        })
-
-        self.irpicturelogger = PictureLogger({
-            "video_path": "./ir_video.mp4",
-            "data_queue": self.ir_log_queue,
-            "image_path": "./ir_images"
-        })
+        
 
         self.normalizer = Normalizer(rawpath="merged_log.csv", outpath="normalized_log.csv")
 
@@ -737,13 +729,29 @@ class Pipeline:
         self.picturelogger = PictureLogger({
             "video_path": session_paths["video_path"],
             "data_queue": self.log_queue,
-            "image_path": session_paths["images_dir"]
+            "image_path": session_paths["images_dir"],
+            "image_type": "np"  # 使用numpy数组格式
         })
 
         self.irpicturelogger = PictureLogger({
             "video_path": session_paths["ir_video_path"],
             "data_queue": self.ir_log_queue,
-            "image_path": session_paths["ir_images_dir"]
+            "image_path": session_paths["ir_images_dir"],
+            "image_type": "np"  # 使用numpy数组格式
+        })
+
+        self.raw_frame_logger = PictureLogger({
+            "video_path": session_paths["video_path"].replace("video.mkv", "raw_video.mkv"),
+            "data_queue": self.raw_frame_queue,
+            "image_path": session_paths["images_dir"].replace("images", "raw_images"),
+            "image_type": "raw"
+        })
+
+        self.raw_ir_frame_logger = PictureLogger({
+            "video_path": session_paths["ir_video_path"].replace("ir_video.mkv", "raw_ir_video.mkv"),
+            "data_queue": self.raw_ir_frame_queue,
+            "image_path": session_paths["ir_images_dir"].replace("ir_images", "raw_ir_images"),
+            "image_type": "raw"
         })
 
         # 确保合并和归一化文件的目录存在
@@ -1273,7 +1281,7 @@ class Pipeline:
         self.threads = [
             capture_thread := threading.Thread(
                 target=self.capture,
-                args=(self.frame_queue, self.ir_frame_queue),
+                args=(self.frame_queue, self.raw_frame_queue, self.ir_frame_queue, self.raw_ir_frame_queue),
                 daemon=True,
                 name="CaptureThread",
             ),
@@ -1310,6 +1318,8 @@ class Pipeline:
         self.threads.append(rppg_log_thread := threading.Thread(target=self.rppglogger, daemon=True, name="RPPGLogThread"))
         self.threads.append(picture_log_thread := threading.Thread(target=self.picturelogger, daemon=True, name="PictureLogThread"))
         self.threads.append(ir_picture_log_thread := threading.Thread(target=self.irpicturelogger, daemon=True, name="IRPictureLogThread"))
+        # self.threads.append(raw_frame_log_thread := threading.Thread(target=self.raw_frame_logger, daemon=True, name="RawPictureLogThread"))
+        # self.threads.append(raw_ir_frame_log_thread := threading.Thread(target=self.raw_ir_frame_logger, daemon=True, name="RawIRPictureLogThread"))
         for thread in self.threads:
             thread.start()
         print("[Pipeline] Pipeline started with caching mode")
@@ -1511,7 +1521,7 @@ class Pipeline:
         for thread in picture_log_threads:
             try:
                 print(f"[Pipeline] Waiting for {thread.name} to complete video creation...")
-                thread.join(timeout=5)  # 给PictureLogger 5秒时间完成视频创建
+                thread.join(timeout=120)  # 给PictureLogger 5秒时间完成视频创建
                 if thread.is_alive():
                     print(f"[Pipeline] Warning: Thread {thread.name} did not join within timeout")
                 else:
