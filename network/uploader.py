@@ -262,7 +262,7 @@ class ServerUploader:
         try:
             for root, dirs, files in os.walk(patient_folder_path):
                 for file in files:
-                    if file.startswith('.'):
+                    if file.startswith('.') or file.startswith('raw'):
                         continue
                     file_path = os.path.join(root, file)
                     rel_path = os.path.relpath(file_path, patient_folder_path)

@@ -1,3 +1,5 @@
+# coding=utf-8
+
 import cv2
 import queue
 import threading
@@ -37,13 +39,14 @@ def get_hr(y, sr=30, min=30, max=180):
     return f[(f > min / 60) & (f < max / 60)][np.argmax(Pxx[(f > min / 60) & (f < max / 60)])] * 60
 
 def handle_thread_exception(args):
-    print(f"[FATAL] Thread {args.thread.name} crashed: {args.exc_value}")
-    os._exit(1)
+    pass
+    #print(f"[FATAL] Thread {args.thread.name} crashed: {args.exc_value}")
+    #os._exit(1)
 
 threading.excepthook = handle_thread_exception
 
 class SessionManager:
-    """管理会话数据的类"""
+    #"""管理会话数据的类"""
     def __init__(self, base_data_dir="./data"):
         self.base_data_dir = base_data_dir
         self.current_session_dir = None
@@ -601,6 +604,8 @@ class Pipeline:
         self.main_queue = queue.Queue(maxsize=config["max_queue_size"])
         self.log_queue = queue.Queue(maxsize=log_queue_size)
         self.ir_log_queue = queue.Queue(maxsize=log_queue_size)
+        self.log_queue1 = queue.Queue(maxsize=log_queue_size)
+        self.ir_log_queue1 = queue.Queue(maxsize=log_queue_size)
         self.raw_ecg_queue = queue.Queue(maxsize=ecg_queue_size)
         self.display_queue = queue.Queue(maxsize=config["max_queue_size"])
         self.monitor_ecg_queue = queue.Queue(maxsize=ecg_queue_size)
@@ -742,14 +747,14 @@ class Pipeline:
 
         self.raw_frame_logger = PictureLogger({
             "video_path": session_paths["video_path"].replace("video.mkv", "raw_video.mkv"),
-            "data_queue": self.raw_frame_queue,
+            "data_queue": self.log_queue1,
             "image_path": session_paths["images_dir"].replace("images", "raw_images"),
             "image_type": "raw"
         })
 
         self.raw_ir_frame_logger = PictureLogger({
             "video_path": session_paths["ir_video_path"].replace("ir_video.mkv", "raw_ir_video.mkv"),
-            "data_queue": self.raw_ir_frame_queue,
+            "data_queue": self.ir_log_queue1,
             "image_path": session_paths["ir_images_dir"].replace("ir_images", "raw_ir_images"),
             "image_type": "raw"
         })
@@ -1287,13 +1292,13 @@ class Pipeline:
             ),
             preprocess_thread := threading.Thread(
                 target=self.preprocess,
-                args=(self.frame_queue, self.preprocess_queue, self.log_queue, self.config["batch_size"]),
+                args=(self.frame_queue, self.preprocess_queue, self.log_queue, self.log_queue1, self.config["batch_size"]),
                 daemon=True,
                 name="PreprocessThread",
             ),
             ir_preprocess_thread := threading.Thread(
                 target=self.ir_preprocess,
-                args=(self.ir_frame_queue, None, self.ir_log_queue, self.config["batch_size"]),
+                args=(self.ir_frame_queue, None, self.ir_log_queue, self.ir_log_queue1, self.config["batch_size"]),
                 daemon=True,
                 name="IRPreprocessThread",
             ),
@@ -1318,8 +1323,8 @@ class Pipeline:
         self.threads.append(rppg_log_thread := threading.Thread(target=self.rppglogger, daemon=True, name="RPPGLogThread"))
         self.threads.append(picture_log_thread := threading.Thread(target=self.picturelogger, daemon=True, name="PictureLogThread"))
         self.threads.append(ir_picture_log_thread := threading.Thread(target=self.irpicturelogger, daemon=True, name="IRPictureLogThread"))
-        # self.threads.append(raw_frame_log_thread := threading.Thread(target=self.raw_frame_logger, daemon=True, name="RawPictureLogThread"))
-        # self.threads.append(raw_ir_frame_log_thread := threading.Thread(target=self.raw_ir_frame_logger, daemon=True, name="RawIRPictureLogThread"))
+        self.threads.append(raw_frame_log_thread := threading.Thread(target=self.raw_frame_logger, daemon=True, name="RawPictureLogThread"))
+        self.threads.append(raw_ir_frame_log_thread := threading.Thread(target=self.raw_ir_frame_logger, daemon=True, name="RawIRPictureLogThread"))
         for thread in self.threads:
             thread.start()
         print("[Pipeline] Pipeline started with caching mode")
@@ -1591,7 +1596,8 @@ def main():
     capture.set_camera_paths(rgb_cam, ir_cam)
     
     print("[Main] Loading Camera...Done")
-    target_size = 36 if model_choice == "Step" else 32
+    #target_size = 36 if model_choice == "Step" else 32
+    target_size = 128
     batch_size = 1 if model_choice == "Step" else 128
     print("[Main] Loading MediaPipe...")
     preprocess = MediaPipePreprocess({
@@ -1653,6 +1659,20 @@ def main():
     try:
         last_status = None
         while True:
+            if False:
+                msg = {
+                    "start_capture": {
+                        "patient_info": {"name": "Test Patient", "age": 30, "gender": "male"},  # 空患者信息
+                        "time": time.time()  # 当前时间戳
+                    }
+                }
+                bluetooth_handler.rx_queue.put(msg)
+                print("[SIM] Sent simulated start_capture command")
+                time.sleep(300)
+                msg = {"stop_capture": {"time": time.time()}}
+                bluetooth_handler.rx_queue.put(msg)
+                print("[SIM] Sent stop_capture command")
+            
             current_status = global_vars.pipeline_running
             data_acquisition_status = global_vars.data_acquisition_running
             

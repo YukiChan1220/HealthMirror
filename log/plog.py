@@ -24,20 +24,28 @@ class PictureLogger():
         os.makedirs(self.image_path, exist_ok=True)
         # 确保视频文件的目录存在
         os.makedirs(os.path.dirname(self.video_path), exist_ok=True)
+        
+        video_path = os.path.abspath(self.video_path).replace('.mkv', '.avi')
+        self.out = None
+        with open(f'{video_path}.ts', 'w') as f:
+            f.write('frame, ts\n')
 
     def save_image(self, index: int, image: np.ndarray, timestamp: float) -> None:
         if self.image_type == "np":
+            image = image[0]
             # 处理numpy数组格式的图像（原有逻辑）
-            if image.max() <= 1.0:
+            if np.max(image)<=1.0:
                 image = (image * 255).astype(np.uint8)
+            else:
+                image = image.astype('uint8')
             if image.ndim == 3 and image.shape[2] == 4:
                 image = image[:, :, :3]
-            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
         elif self.image_type == "raw":
+            image = image[1]
             # 处理cv2.RGB格式的图像，需要转换为BGR格式
             # 确保图像是uint8格式
             if image.dtype != np.uint8:
-                if image.max() <= 1.0:
+                if np.max(image)<=1.0:
                     image = (image * 255).astype(np.uint8)
                 else:
                     image = image.astype(np.uint8)
@@ -46,18 +54,31 @@ class PictureLogger():
                 image = image[:, :, :3]
             # 将RGB转换为BGR格式（cv2默认使用BGR）
             if image.ndim == 3 and image.shape[2] == 3:
-                image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+                #image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+                pass
         else:
             # 默认处理（保持原有逻辑）
-            if image.max() <= 1.0:
+            image = image[0]
+            if np.max(image)<=1.0:
                 image = (image * 255).astype(np.uint8)
             if image.ndim == 3 and image.shape[2] == 4:
                 image = image[:, :, :3]
-            image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+            else:
+                image = image.astype('uint8')
         
-        filename = f"{self.image_path}/frame_{index:06d}.png"
-        cv2.imwrite(filename, image)
+        #filename = f"{self.image_path}/frame_{index:06d}.png"
+        #cv2.imwrite(filename, image)
         self.timestamps.append(timestamp)
+        video_path = os.path.abspath(self.video_path).replace('.mkv', '.avi')
+        if not self.out:
+            fourcc_mjpg = cv2.VideoWriter_fourcc(*'MJPG')
+            h, w = image.shape[:2]
+            self.out = cv2.VideoWriter(video_path, fourcc_mjpg, 30., (w, h))
+        self.out.write(image)
+        with open(f'{video_path}.ts', 'a+') as f:
+            f.write(f'{self.frame_count}, {timestamp}\n')
+        
+        
 
     def save_video(self) -> None:
         # 检查是否有帧需要保存
@@ -164,6 +185,8 @@ class PictureLogger():
         print(f"[PictureLogger] Working directory: {self.image_path}")
         print(f"[PictureLogger] Frame count: {self.frame_count}")
 
+        return
+        
         try:
             # 检查 timestamps.txt 文件是否存在
             if not os.path.exists(txt_path):
