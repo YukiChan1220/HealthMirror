@@ -76,6 +76,32 @@ class TimestampConverter:
             print(f"[TimestampConverter] Error converting file {file_path}: {e}")
             return False
     
+    def convert_ts_file(self, file_path, output_path=None):
+        # TS文件以逗号分隔，第二列是时间戳，第一行是标题
+        """
+        转换TS文件中的时间戳
+        Args:
+            file_path (str): 输入文件路径
+            output_path (str): 输出文件路径，如果为None则覆盖原文件
+        """
+        if not os.path.exists(file_path):
+            print(f"[TimestampConverter] File not found: {file_path}")
+            return False
+        if output_path is None:
+            output_path = file_path
+        try:
+            df = pd.read_csv(file_path)
+            if 'ts' not in df.columns:
+                print(f"[TimestampConverter] 'ts' column not found in {file_path}")
+                return False
+            df['ts'] = df['ts'] + self.time_offset
+            df.to_csv(output_path, index=False)
+            print(f"[TimestampConverter] Converted timestamps in {file_path}")
+            return True
+        except Exception as e:
+            print(f"[TimestampConverter] Error converting file {file_path}: {e}")
+            return False
+
     def convert_session_files(self, session_dir):
         """
         转换会话目录中的所有日志文件的时间戳
@@ -94,6 +120,11 @@ class TimestampConverter:
             "log.csv",
             "merged_log.csv"
         ]
+        ts_files_to_convert = [
+            "video.ts",
+            "ir_video.ts"
+        ]
+
         
         success_count = 0
         total_count = 0
@@ -103,6 +134,18 @@ class TimestampConverter:
             if os.path.exists(file_path):
                 total_count += 1
                 if self.convert_csv_file(file_path):
+                    success_count += 1
+                    print(f"[TimestampConverter] Successfully converted {filename}")
+                else:
+                    print(f"[TimestampConverter] Failed to convert {filename}")
+            else:
+                print(f"[TimestampConverter] File not found: {filename}")
+        
+        for filename in ts_files_to_convert:
+            file_path = os.path.join(session_dir, filename)
+            if os.path.exists(file_path):
+                total_count += 1
+                if self.convert_ts_file(file_path):
                     success_count += 1
                     print(f"[TimestampConverter] Successfully converted {filename}")
                 else:
