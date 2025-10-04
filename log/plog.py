@@ -28,7 +28,7 @@ class PictureLogger():
         video_path = os.path.abspath(self.video_path).replace('.mkv', '.avi')
         self.out = None
         with open(f'{video_path}.ts', 'w') as f:
-            f.write('frame, ts\n')
+            f.write('frame,ts\n')
 
     def save_image(self, index: int, image: np.ndarray, timestamp: float) -> None:
         if self.image_type == "np":
@@ -76,7 +76,7 @@ class PictureLogger():
             self.out = cv2.VideoWriter(video_path, fourcc_mjpg, 30., (w, h))
         self.out.write(image)
         with open(f'{video_path}.ts', 'a+') as f:
-            f.write(f'{self.frame_count}, {timestamp}\n')
+            f.write(f'{self.frame_count},{timestamp}\n')
         
         
 

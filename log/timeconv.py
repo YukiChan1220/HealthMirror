@@ -121,8 +121,8 @@ class TimestampConverter:
             "merged_log.csv"
         ]
         ts_files_to_convert = [
-            "video.ts",
-            "ir_video.ts"
+            "video.avi.ts",
+            "ir_video.avi.ts"
         ]
 
         
