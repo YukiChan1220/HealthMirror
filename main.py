@@ -40,13 +40,9 @@ def get_hr(y, sr=30, min=30, max=180):
 
 def handle_thread_exception(args):
     pass
-    #print(f"[FATAL] Thread {args.thread.name} crashed: {args.exc_value}")
-    #os._exit(1)
-
 threading.excepthook = handle_thread_exception
 
 class SessionManager:
-    #"""管理会话数据的类"""
     def __init__(self, base_data_dir="./data"):
         self.base_data_dir = base_data_dir
         self.current_session_dir = None
@@ -54,12 +50,10 @@ class SessionManager:
         self.patient_info = None
         self.patient_id_file = os.path.join(self.base_data_dir, "patient_id_counter.txt")
         
-        # 时间同步相关属性
-        self.reference_timestamp = None  # 接收到的基准时间戳（Unix时间戳）
-        self.system_timestamp = None     # 系统接收到命令时的时间戳
-        self.time_offset = None          # 时间差（reference - system）
-        
-        # 确保基础数据目录存在
+        self.reference_timestamp = None
+        self.system_timestamp = None
+        self.time_offset = None
+
         os.makedirs(self.base_data_dir, exist_ok=True)
     
     def reset_session(self):
@@ -67,27 +61,20 @@ class SessionManager:
         self.current_session_dir = None
         self.current_patient_id = None
         self.patient_info = None
-        # 重置时间同步相关属性
         self.reference_timestamp = None
         self.system_timestamp = None
         self.time_offset = None
         print("[SessionManager] Session state reset")
         
     def _get_next_patient_id(self):
-        """获取下一个病人ID"""
         try:
-            # 尝试从文件读取当前计数器
             if os.path.exists(self.patient_id_file):
                 with open(self.patient_id_file, 'r') as f:
                     current_id = int(f.read().strip())
             else:
-                # 如果文件不存在，从现有目录中推断最大ID
                 current_id = self._scan_existing_patient_dirs()
-            
-            # 递增ID
             next_id = current_id + 1
             
-            # 保存新的计数器值
             with open(self.patient_id_file, 'w') as f:
                 f.write(str(next_id))
             
@@ -95,18 +82,15 @@ class SessionManager:
             
         except Exception as e:
             print(f"[SessionManager] Error getting next patient ID: {e}")
-            # 如果出错，从现有目录扫描
             return self._scan_existing_patient_dirs() + 1
     
     def _scan_existing_patient_dirs(self):
-        """扫描现有的patient目录，找到最大的ID"""
         max_id = 0
         try:
             if os.path.exists(self.base_data_dir):
                 for dirname in os.listdir(self.base_data_dir):
                     if dirname.startswith("patient_") and os.path.isdir(os.path.join(self.base_data_dir, dirname)):
                         try:
-                            # 提取ID部分
                             id_str = dirname.replace("patient_", "")
                             patient_id = int(id_str)
                             max_id = max(max_id, patient_id)
@@ -118,51 +102,37 @@ class SessionManager:
         return max_id
         
     def set_reference_time(self, reference_timestamp):
-        """设置基准时间戳并计算时间差"""
         self.reference_timestamp = float(reference_timestamp)
         self.system_timestamp = time.time()
         self.time_offset = self.reference_timestamp - self.system_timestamp
         print(f"[SessionManager] Time sync set: reference={self.reference_timestamp}, system={self.system_timestamp}, offset={self.time_offset}")
     
     def get_time_offset(self):
-        """获取时间偏移量"""
         return self.time_offset
     
     def convert_system_to_reference_time(self, system_timestamp):
-        """将系统时间戳转换为基准时间戳"""
         if self.time_offset is None:
             print("[SessionManager] Warning: No time offset set, using original timestamp")
             return system_timestamp
         return system_timestamp + self.time_offset
         
     def create_new_session(self, patient_info=None):
-        """创建新的会话目录"""
-        # 保存当前的时间同步信息
         saved_reference_timestamp = self.reference_timestamp
         saved_system_timestamp = self.system_timestamp
         saved_time_offset = self.time_offset
-        
-        # 先重置之前的会话状态（但不重置时间同步信息）
         self.current_session_dir = None
         self.current_patient_id = None
         self.patient_info = None
-        
-        # 恢复时间同步信息
         self.reference_timestamp = saved_reference_timestamp
         self.system_timestamp = saved_system_timestamp
         self.time_offset = saved_time_offset
         
         print("[SessionManager] Session state reset (time sync preserved)")
-        
-        # 获取下一个病人ID
         patient_id = self._get_next_patient_id()
-        patient_id_str = f"{patient_id:06d}"  # 格式化为6位数字，如000001
+        patient_id_str = f"{patient_id:06d}"
         
-        # 创建会话目录
         session_dir = os.path.join(self.base_data_dir, f"patient_{patient_id_str}")
         os.makedirs(session_dir, exist_ok=True)
-        
-        # 创建子目录
         os.makedirs(os.path.join(session_dir, "images"), exist_ok=True)
         os.makedirs(os.path.join(session_dir, "ir_images"), exist_ok=True)
         
@@ -170,7 +140,6 @@ class SessionManager:
         self.current_patient_id = patient_id_str
         self.patient_info = patient_info
         
-        # 保存患者信息
         timestamp = datetime.now()
         if patient_info:
             self._save_patient_info(patient_info, timestamp)
@@ -181,7 +150,6 @@ class SessionManager:
         return session_dir
     
     def _save_patient_info(self, patient_info, timestamp):
-        """保存患者信息到txt文件"""
         info_file = os.path.join(self.current_session_dir, "patient_info.txt")
         with open(info_file, 'w', encoding='utf-8') as f:
             f.write(f"Patient ID: {self.current_patient_id}\n")
@@ -189,11 +157,8 @@ class SessionManager:
             f.write(f"Patient Info: {json.dumps(patient_info, indent=2, ensure_ascii=False)}\n")
     
     def get_session_paths(self):
-        """获取当前会话的各种文件路径"""
         if not self.current_session_dir:
             return {}
-        
-        # 确保会话目录和子目录存在
         os.makedirs(self.current_session_dir, exist_ok=True)
         os.makedirs(os.path.join(self.current_session_dir, "images"), exist_ok=True)
         os.makedirs(os.path.join(self.current_session_dir, "ir_images"), exist_ok=True)
@@ -212,16 +177,13 @@ class SessionManager:
         }
     
     def get_total_sessions(self):
-        """获取总会话数"""
         if not os.path.exists(self.base_data_dir):
             return 0
-        
         session_dirs = [d for d in os.listdir(self.base_data_dir) 
                        if d.startswith("patient_") and os.path.isdir(os.path.join(self.base_data_dir, d))]
         return len(session_dirs)
     
     def get_total_space_used(self):
-        """计算已使用的存储空间（MB）"""
         if not os.path.exists(self.base_data_dir):
             return 0
         
@@ -234,14 +196,12 @@ class SessionManager:
                 except OSError:
                     pass
         
-        return total_size / (1024 * 1024)  # 转换为MB
+        return total_size / (1024 * 1024)
     
     def get_current_patient_id(self):
-        """获取当前病人ID"""
         return self.current_patient_id
     
     def get_current_session_dir(self):
-        """获取当前会话目录"""
         return self.current_session_dir
 
 
@@ -252,25 +212,16 @@ class BluetoothHandler:
         self.bluetooth = Bluetooth()
         self.rx_queue = queue.Queue()
         self.tx_queue = queue.Queue()
-        
-        # Device status
         self.device_id = 1
         self.session_manager = SessionManager()
-        
-        # Server uploader
         self.server_uploader = ServerUploader()
-        
-        # Thread management
         self.handler_thread = None
         self.running = False
-        
-        # 添加当前会话跟踪
         self.current_upload_session = None
 
         self.wifi_manager = WiFiManager()
 
     def start(self):
-        """Start the bluetooth service and command handler thread"""
         self.bluetooth(self.tx_queue, self.rx_queue)
         global_vars.bluetooth_running = True
         self.running = True
@@ -284,7 +235,6 @@ class BluetoothHandler:
         print("[BluetoothHandler] Bluetooth handler started")
 
     def stop(self):
-        """Stop the bluetooth service"""
         self.running = False
         global_vars.bluetooth_running = False
         
@@ -294,7 +244,6 @@ class BluetoothHandler:
         print("[BluetoothHandler] Bluetooth handler stopped")
 
     def _send_ack(self, command_name, status="success"):
-        """Send acknowledgment message"""
         self.tx_queue.put({
             "ack": {
                 "command": command_name,
@@ -303,35 +252,25 @@ class BluetoothHandler:
         })
 
     def _handle_set_time(self, payload):
-        """Handle set_time command"""
         print(f"[BluetoothHandler] Set time: {payload.get('time')}")
         return "success"
 
     def _handle_start_capture(self, payload):
-        """Handle start_capture command"""
         patient_info = payload.get("patient_info")
         timestamp = payload.get("time")
         print(f"[BluetoothHandler] Start capture: patient={patient_info}, time={timestamp}")
         
         try:
-            # 重置当前会话跟踪
             self.current_upload_session = None
-            
-            # 设置基准时间戳（从接收到的JSON中提取的时间戳）
             if timestamp is not None:
                 self.session_manager.set_reference_time(timestamp)
             else:
                 print("[BluetoothHandler] Warning: No timestamp provided in start_capture command")
-            
-            # 创建新的会话目录
             session_dir = self.session_manager.create_new_session(patient_info)
-            
-            # 更新当前会话跟踪
             self.current_upload_session = session_dir
             print(f"[BluetoothHandler] Current upload session set to: {session_dir}")
             
             if self.pipeline:
-                # 更新pipeline的文件路径
                 self.pipeline.update_session_paths(self.session_manager.get_session_paths())
                 self.pipeline.start()
             
@@ -341,11 +280,8 @@ class BluetoothHandler:
             return "failure"
 
     def _handle_stop_capture(self, payload):
-        """Handle stop_capture command"""
         timestamp = payload.get("time")
         print(f"[BluetoothHandler] Stop capture at time {timestamp}")
-        
-        # 获取当前会话目录
         current_session_dir = self.current_upload_session or self.session_manager.get_current_session_dir()
         print(f"[BluetoothHandler] Current session directory for upload: {current_session_dir}")
         
@@ -356,11 +292,8 @@ class BluetoothHandler:
             print(f"[BluetoothHandler] Error stopping pipeline: {e}")
             import traceback
             traceback.print_exc()
-        
-        # 在停止后尝试上传数据和处理待上传的文件夹
         if current_session_dir:
             print(f"[BluetoothHandler] Starting upload process for session: {current_session_dir}")
-            # 在后台线程中执行上传，避免阻塞蓝牙响应
             upload_thread = threading.Thread(
                 target=self._upload_session_and_pending,
                 args=(current_session_dir,),
@@ -369,7 +302,6 @@ class BluetoothHandler:
             )
             upload_thread.start()
         else:
-            # 即使没有当前会话，也检查是否有待上传的文件夹
             print(f"[BluetoothHandler] No current session, checking for pending uploads")
             upload_thread = threading.Thread(
                 target=self._upload_pending_only,
@@ -377,41 +309,29 @@ class BluetoothHandler:
                 name="UploadPendingThread"
             )
             upload_thread.start()
-        
-        # 重置当前会话跟踪
         self.current_upload_session = None
         
         return "success"
     
+    # upload all pending folders
     def _upload_session_and_pending(self, session_dir):
-        """上传当前会话数据和所有待上传的文件夹"""
         try:
             print(f"[Upload] Starting upload process for: {session_dir}")
-            
-            # 等待一小段时间确保文件完全写入
             time.sleep(2)
-            
-            # 检查会话目录是否存在
             if not os.path.exists(session_dir):
                 print(f"[Upload] Session directory does not exist: {session_dir}")
                 return
-            
-            # 列出会话目录中的文件用于调试
             try:
                 files_in_session = os.listdir(session_dir)
                 print(f"[Upload] Files in session directory: {files_in_session}")
             except Exception as e:
                 print(f"[Upload] Error listing session files: {e}")
-            
-            # 首先尝试上传当前会话数据
             print(f"[Upload] Attempting to upload current session data...")
             current_success = self.server_uploader.upload_patient_data(session_dir)
             if current_success:
                 print(f"[Upload] Successfully uploaded current session: {session_dir}")
             else:
                 print(f"[Upload] Failed to upload current session (marked as pending): {session_dir}")
-            
-            # 然后尝试上传所有待上传的文件夹
             print(f"[Upload] Checking for pending uploads...")
             base_data_dir = self.session_manager.base_data_dir
             batch_success, success_count, failed_count = self.server_uploader.upload_all_pending(base_data_dir)
@@ -420,9 +340,7 @@ class BluetoothHandler:
                 print(f"[Upload] Successfully uploaded {success_count} pending folders")
             if failed_count > 0:
                 print(f"[Upload] Failed to upload {failed_count} pending folders")
-            
-            # 总结上传结果
-            total_attempted = 1 + success_count + failed_count  # 当前会话 + 待上传文件夹
+            total_attempted = 1 + success_count + failed_count
             total_successful = (1 if current_success else 0) + success_count
             print(f"[Upload] Upload summary: {total_successful}/{total_attempted} folders uploaded successfully")
                 
@@ -430,9 +348,9 @@ class BluetoothHandler:
             print(f"[Upload] Error during upload: {e}")
             import traceback
             traceback.print_exc()
-    
+
+    # upload only pending folders
     def _upload_pending_only(self):
-        """只上传待上传的文件夹"""
         try:
             print(f"[Upload] Checking for pending uploads only...")
             base_data_dir = self.session_manager.base_data_dir
@@ -454,31 +372,23 @@ class BluetoothHandler:
         """Handle refresh_info command"""
         timestamp = payload.get("time")
         print(f"[BluetoothHandler] Refresh info at time {timestamp}")
-        
-        # Send info after a short delay to allow for data collection
         threading.Timer(0.5, self._send_info).start()
         return "success"
 
     def _send_info(self):
-        """Send device information with real data from peripherals"""
         try:
-            # 获取电池电量
-            battery_level = 70  # 默认值
+            battery_level = 70
             if self.perip_manager:
                 try:
                     battery_level = self.perip_manager.get_battery_level()
-                    if battery_level < 0:  # 如果获取失败，使用默认值
+                    if battery_level < 0:
                         battery_level = 70
                 except Exception as e:
                     print(f"[BluetoothHandler] Error getting battery level: {e}")
                     battery_level = 70
-
-            # 获取剩余空间（假设总空间为40960MB）
             total_space = 40960
             used_space = self.session_manager.get_total_space_used()
             space_remaining = max(0, total_space - used_space)
-            
-            # 获取已采集病人数量
             patient_count = self.session_manager.get_total_sessions()
             
             info_data = {
@@ -495,7 +405,6 @@ class BluetoothHandler:
             
         except Exception as e:
             print(f"[BluetoothHandler] Error sending device info: {e}")
-            # 发送默认信息以确保通信不中断
             self.tx_queue.put({
                 "info": {
                     "device_id": self.device_id,
@@ -514,8 +423,6 @@ class BluetoothHandler:
         timestamp = payload.get("time")
         
         print(f"[BluetoothHandler] Config WiFi: ssid={ssid}, auth={auth}, user={username}, time={timestamp}")
-        
-        # Use WiFiManager to handle the connection
         result = self.wifi_manager.connect(ssid, auth, username, password)
         
         if result["status"] == "success":
@@ -537,7 +444,7 @@ class BluetoothHandler:
 
         while self.running:
             try:
-                msg = self.rx_queue.get(timeout=0.5)  # 减少超时时间，提高响应性
+                msg = self.rx_queue.get(timeout=0.5)
                 if not isinstance(msg, dict):
                     print(f"[BluetoothHandler] Ignoring invalid message: {msg}")
                     continue
@@ -557,7 +464,6 @@ class BluetoothHandler:
                     self._send_ack(command_name, "unknown")
 
             except queue.Empty:
-                # 队列为空时短暂休眠，减少CPU占用
                 time.sleep(0.01)
                 continue
             except Exception as e:
@@ -565,14 +471,11 @@ class BluetoothHandler:
                 time.sleep(0.1)
 
     def set_pipeline(self, pipeline):
-        """Set the pipeline reference"""
         self.pipeline = pipeline
-        # 为Pipeline设置SessionManager引用
         if self.pipeline:
             self.pipeline.session_manager = self.session_manager
 
     def get_session_manager(self):
-        """获取会话管理器"""
         return self.session_manager
 
 
