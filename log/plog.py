@@ -66,8 +66,6 @@ class PictureLogger():
             else:
                 image = image.astype('uint8')
         
-        #filename = f"{self.image_path}/frame_{index:06d}.png"
-        #cv2.imwrite(filename, image)
         self.timestamps.append(timestamp)
         video_path = os.path.abspath(self.video_path).replace('.mkv', '.avi')
         if not self.out:

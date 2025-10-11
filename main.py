@@ -15,8 +15,6 @@ from scipy.signal import butter, filtfilt, welch
 import global_vars
 from bluetooth.listen import Bluetooth
 from capture.camera import CameraCapture
-from model.physnet import PhysNet
-from model.step import Step
 from preprocess.mp import MediaPipePreprocess
 from ecg.ecg import ECG
 from log.dlog import DataLogger
@@ -485,7 +483,6 @@ class Pipeline:
         self.capture = config["capture"]
         self.preprocess = config["preprocess"]
         self.ir_preprocess = config["ir_preprocess"]
-        self.model = config["model"]
         self.ecg = config["ecg"]
         self.interrupt_hotkey = config["interrupt_hotkey"]
         self.log = config["log"]
@@ -560,24 +557,7 @@ class Pipeline:
         # 添加缓存日志控制属性
         self.cache_log_interval = config.get("cache_log_interval", 3.0)  # 每10秒输出一次缓存信息
         self.last_cache_log = 0
-        self.cache_frame_count = 0  # 累计缓存的帧数
-
-        # 初始化日志记录器（默认路径，会在启动时更新）
-        self.ecglogger = DataLogger({
-            "log_path": "./ecg_log.csv",
-            "data_queue": self.raw_ecg_queue,
-        })
-        self.rppglogger = DataLogger({
-            "log_path": "./rppg_log.csv",
-            "data_queue": self.log_result_queue,
-        })
-        self.filemerger = FileMerger(input_files=["./ecg_log.csv", "./rppg_log.csv"], output_path="merged_log.csv")
-
-        
-
-        self.normalizer = Normalizer(rawpath="merged_log.csv", outpath="normalized_log.csv")
-
-        # Initialize the heart rate buffer for the sliding window (10 seconds)
+        self.cache_frame_count = 0
         self.heart_rate_buffer = []
 
         # Open CSV file in append mode and write header if it's empty
@@ -590,26 +570,10 @@ class Pipeline:
             print(f"[Pipeline] Pipeline initialized")
 
     def update_session_paths(self, session_paths):
-        """更新会话路径"""
-        # 确保所有目录存在
         for path_key in ["session_dir", "images_dir", "ir_images_dir"]:
             if path_key in session_paths:
                 os.makedirs(session_paths[path_key], exist_ok=True)
-        
-        # 更新CSV文件路径
-        self.csv_file = session_paths["main_log"]
-        
-        # 确保CSV文件的目录存在
-        os.makedirs(os.path.dirname(self.csv_file), exist_ok=True)
-        
-        # 重新创建CSV文件和写入头部
-        if not os.path.exists(self.csv_file):
-            with open(self.csv_file, mode='w', newline='') as file:
-                writer = csv.writer(file)
-                writer.writerow(['timestamp', 'inference_result'])
 
-        # 更新各个日志记录器的路径
-        # 确保日志文件的目录存在
         for log_path in [session_paths["ecg_log"], session_paths["rppg_log"]]:
             os.makedirs(os.path.dirname(log_path), exist_ok=True)
         
@@ -627,8 +591,6 @@ class Pipeline:
             input_files=[session_paths["rppg_log"], session_paths["ecg_log"]], 
             output_path=session_paths["merged_log"]
         )
-
-        # 确保视频文件的目录存在
         for video_path in [session_paths["video_path"], session_paths["ir_video_path"]]:
             os.makedirs(os.path.dirname(video_path), exist_ok=True)
 
@@ -883,12 +845,6 @@ class Pipeline:
                 daemon=True,
                 name="IRPreprocessThread",
             ),
-            cache_thread := threading.Thread(
-                target=self.cache_preprocessed_data,
-                args=(self.preprocess_queue,),
-                daemon=True,
-                name="CacheThread",
-            ),
             ecg_thread := threading.Thread(
                 target=self.ecg,
                 args=(self.raw_ecg_queue, self.monitor_ecg_queue),
@@ -1096,13 +1052,12 @@ class Pipeline:
 
 
 def main():
-    model_choice, log_path, time_limit = "Step", "./log.csv", 60
+    log_path, time_limit = "./log.csv", 60
     rgb_cam = '/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._RGB_CAMERA_SN0008-video-index0'
     ir_cam = '/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB_2.0_Camera_SN0001-video-index0'
 
     print("[Main] RGB Camera:", rgb_cam)
     print("[Main] IR Camera", ir_cam)
-    print("[Main] Model Choice:", model_choice)
     print("[Main] Log Path:", log_path)
     print("[Main] Time Limit:", time_limit)
 
@@ -1126,7 +1081,7 @@ def main():
     print("[Main] Loading Camera...Done")
     #target_size = 36 if model_choice == "Step" else 32
     target_size = 128
-    batch_size = 1 if model_choice == "Step" else 128
+    batch_size = 1
     print("[Main] Loading MediaPipe...")
     preprocess = MediaPipePreprocess({
         "target_size": (target_size, target_size),
@@ -1138,23 +1093,12 @@ def main():
     })
     
     print("[Main] Loading MediaPipe...Done")
-    if model_choice == "Step":
-        model = Step(
-            model_path="./model/models/onnx/step.onnx",
-            state_path="./model/models/onnx/state.pkl",
-            dt=1 / 30
-        )
-    else:
-        model = PhysNet(
-            model_path="./model/models/onnx/physnet.onnx"
-        )
-    print("[Main] Loading Model...Done")
+
     print("[Main] Loading Pipeline...")
     pipeline = Pipeline({
         "capture": capture,
         "preprocess": preprocess,
         "ir_preprocess": ir_preprocess,
-        "model": model,
         "ecg": ecg,
         "interrupt_hotkey": "esc",
         "max_queue_size": 512,
