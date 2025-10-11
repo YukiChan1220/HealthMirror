@@ -95,8 +95,9 @@ class TimestampConverter:
                 print(f"[TimestampConverter] 'ts' column not found in {file_path}")
                 return False
             df['ts'] = df['ts'] + self.time_offset
+            row_count = len(df)
             df.to_csv(output_path, index=False)
-            print(f"[TimestampConverter] Converted timestamps in {file_path}")
+            print(f"[TimestampConverter] Converted {row_count} timestamps in {file_path}")
             return True
         except Exception as e:
             print(f"[TimestampConverter] Error converting file {file_path}: {e}")
