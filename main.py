@@ -490,13 +490,12 @@ class Pipeline:
         self.interrupt_hotkey = config["interrupt_hotkey"]
         self.log = config["log"]
         self.perip_manager = config["perip_manager"]
-        self.session_manager = session_manager  # 添加会话管理器引用
-        # 为不同队列设置合适的大小
-        frame_queue_size = config.get("frame_queue_size", 128)  # 原始帧队列，较小
-        preprocess_queue_size = config.get("preprocess_queue_size", 128)  # 预处理队列，中等
-        log_queue_size = config.get("log_queue_size", 512)  # 日志队列，较大
-        ecg_queue_size = config.get("ecg_queue_size", 1024)  # ECG队列，最大
-        
+        self.session_manager = session_manager
+        frame_queue_size = config.get("frame_queue_size", 128)
+        preprocess_queue_size = config.get("preprocess_queue_size", 128)
+        log_queue_size = config.get("log_queue_size", 512)
+        ecg_queue_size = config.get("ecg_queue_size", 1024)
+
         self.frame_queue = queue.Queue(maxsize=frame_queue_size)
         self.raw_frame_queue = queue.Queue(maxsize=frame_queue_size)
         self.ir_frame_queue = queue.Queue(maxsize=frame_queue_size)
@@ -521,7 +520,6 @@ class Pipeline:
         global_vars.pipeline_running = False
         self.heart_rate_buffer = []
         
-        # 添加图像缓存相关属性
         self.cached_frames = []  # 存储预处理后的图像数据
         self.cached_timestamps = []  # 存储对应的时间戳
         self.cache_lock = threading.Lock()  # 线程安全锁
