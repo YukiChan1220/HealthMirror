@@ -2,6 +2,7 @@ import os
 import socket
 import paramiko
 from datetime import datetime
+import global_vars
 
 class ServerUploader:
     """处理服务器上传的类"""
@@ -12,7 +13,7 @@ class ServerUploader:
             "port": 22,
             "username": "root",  # 替换为实际用户名
             "password": "thu@PiServer!",  # 替换为实际密码
-            "remote_path": "/root/health_mirror/health_mirror_04",  # 修改为Linux路径格式
+            "remote_path": f"/root/health_mirror/health_mirror_{global_vars.device_id}",  # 修改为Linux路径格式
             "timeout": 30
         }
     

@@ -51,7 +51,7 @@ def main(duration: float = 10.0) -> None:
 
     print(f"Captured {len(samples)} samples over {duration} seconds, fs={fs:.2f} Hz")
 
-    output_dir = Path("./test_data/ppg_tests")
+    output_dir = Path("./tests/data")
     output_dir.mkdir(parents=True, exist_ok=True)
     figure_path = output_dir
 

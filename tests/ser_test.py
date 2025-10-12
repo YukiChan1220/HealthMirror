@@ -4,7 +4,7 @@ import time
 
 
 serial = serial.Serial(
-    port="/dev/4",
+    port="/dev/ttyS1",
     baudrate=115200,
     timeout=1,
     parity=serial.PARITY_NONE,

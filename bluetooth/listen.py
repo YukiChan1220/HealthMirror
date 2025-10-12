@@ -6,12 +6,13 @@ import json
 import time
 import threading
 import os
+import global_vars
 
 class Bluetooth(BluetoothBase):
     def __init__(self):
         # TODO: ? super().__init__()
         try:
-            self.serialSPP = SerialSPP("HealthMirror04", "/dev/ttyS0", 115200, 115200)
+            self.serialSPP = SerialSPP(f"HealthMirror{global_vars.device_id}", "/dev/ttyS0", 115200, 115200)
         except Exception as e:
             print(f"[FATAL] [Bluetooth] Failed to initialize SerialSPP: {e}, exiting")
             os._exit(1)  # Exit if SerialSPP initialization fails

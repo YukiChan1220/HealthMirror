@@ -1,6 +1,6 @@
 import serial
 import time
-
+import global_vars
 class SerialSPP:
     baudrate = {
         9600: "4",
@@ -51,5 +51,5 @@ class SerialSPP:
         return self.init_spp()
 
 
-serialSPP = SerialSPP("HealthMirror04", "/dev/ttyS0", 115200, 115200)
+serialSPP = SerialSPP(f"HealthMirror{global_vars.device_id}", "/dev/ttyS0", 115200, 115200)
 serialSPP.init_spp()
