@@ -536,9 +536,6 @@ class Pipeline:
         self.queue_monitor_interval = config.get("queue_monitor_interval", 3.0)
         self.last_queue_monitor = 0
         
-        self.cache_log_interval = config.get("cache_log_interval", 3.0)
-        self.last_cache_log = 0
-        self.cache_frame_count = 0
         self.heart_rate_buffer = []
 
         if not os.path.exists(self.csv_file):
@@ -1006,11 +1003,7 @@ class Pipeline:
         
         self.last_display_update = 0
         self.last_ecg_quality_display = 0
-        self.last_queue_monitor = 0  # 重置队列监控时间
-        self.last_cache_log = 0  # 重置缓存日志时间
-        self.cache_frame_count = 0  # 重置累计缓存帧数
-        
-        # 强制垃圾回收
+        self.last_queue_monitor = 0
         collected = gc.collect()
         print(f"[Pipeline] Garbage collector collected {collected} objects")
 
@@ -1090,7 +1083,6 @@ def main():
 
     print("[Main] Loading Bluetooth...")
     bluetooth_handler = BluetoothHandler(pipeline, peripmanager)
-    # 在设置pipeline后，会自动设置session_manager引用
     bluetooth_handler.set_pipeline(pipeline)
     bluetooth_handler.start()
     print("[Main] Loading Bluetooth...Done")
@@ -1130,26 +1122,21 @@ def main():
     print("[Main] Releasing resources...")
     bluetooth_handler.stop()
     
-    # 释放摄像头资源
     try:
         cap.release()
         print("[Main] RGB camera released")
     except Exception as e:
         print(f"[Main] Error releasing RGB camera: {e}")
-    
     try:
         ir_cap.release()
         print("[Main] IR camera released")
     except Exception as e:
         print(f"[Main] Error releasing IR camera: {e}")
-    
     try:
         ppg.disable()
         print("[Main] PPG sensor disabled")
     except Exception as e:
         print(f"[Main] Error disabling PPG sensor: {e}")
-
-    # 释放OpenCV资源
     try:
         cv2.destroyAllWindows()
         print("[Main] OpenCV windows destroyed")
