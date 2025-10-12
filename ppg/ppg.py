@@ -10,15 +10,17 @@ from .max30101 import MAX30101, MAX30101Config
 
 class PPG(PPGBase):
     def __init__(self, config: dict) -> None:
-        sensor_cfg = config.get("max30101", {})
+        sensor_cfg = config
         bus = sensor_cfg.get("bus", 4)
         address = sensor_cfg.get("address", MAX30101.DEFAULT_ADDRESS)
+        self.monitor = sensor_cfg.get("monitor", False)
         config_obj = sensor_cfg.get("config")
+
         if isinstance(config_obj, dict):
             config_obj = MAX30101Config(**config_obj)
         self.sensor = MAX30101(bus=bus, address=address, config=config_obj)
         self.max_queue_size = config.get("max_queue_size", 512)
-        self.poll_interval = config.get("poll_interval", 0.01)
+        self.poll_interval = config.get("poll_interval", 0.005)
 
     def enable(self) -> None:
         self.sensor.enable()
@@ -47,7 +49,8 @@ class PPG(PPGBase):
                 ppg_data = self.read_ppg()
                 if ppg_data is not None:
                     raw_ppg_queue.put(ppg_data)
-                    monitor_ppg_queue.put(ppg_data)
+                    if self.monitor:
+                        monitor_ppg_queue.put(ppg_data)
                 else:
                     time.sleep(self.poll_interval)
         finally:

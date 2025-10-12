@@ -24,7 +24,7 @@ class CameraCapture(CaptureBase):
         self.rgb_frame_count = 0
         self.ir_frame_count = 0
 
-    def __call__(self, frame_queue: Queue, frame_log_queue: Queue, ir_frame_queue: Queue, ir_frame_log_queue: Queue) -> None:
+    def __call__(self, frame_queue: Queue, ir_frame_queue: Queue) -> None:
         print("[Camera] Starting camera capture threads")
         
         # 在每次采集开始时检查并重新初始化摄像头
@@ -57,13 +57,13 @@ class CameraCapture(CaptureBase):
         # 创建并启动线程
         rgb_thread = threading.Thread(
             target=self._capture_rgb,
-            args=(frame_queue, frame_log_queue),
+            args=(frame_queue,),
             daemon=True
         )
         
         ir_thread = threading.Thread(
             target=self._capture_ir,
-            args=(ir_frame_queue, ir_frame_log_queue),
+            args=(ir_frame_queue,),
             daemon=True
         )
         
@@ -84,7 +84,7 @@ class CameraCapture(CaptureBase):
         finally:
             print("[Camera] Camera capture threads finished")
 
-    def _capture_rgb(self, frame_queue, frame_log_queue):
+    def _capture_rgb(self, frame_queue):
         """RGB摄像头采集线程"""
         print("[Camera] Starting RGB capture thread")
         self.rgb_frame_count = 0
@@ -96,11 +96,11 @@ class CameraCapture(CaptureBase):
                 os._exit(1)
                 
             # 检查队列是否已满
-            if frame_queue.full() or frame_log_queue.full():
-                print("[Camera] RGB frame queue(s) are full, skipping frame")
+            if frame_queue.full():
+                print("[Camera] RGB frame queue is full, skipping frame")
                 time.sleep(0.5)
-                if frame_queue.full() or frame_log_queue.full():
-                    print("[FATAL] [Camera] RGB frame queue(s) are still full, exiting")
+                if frame_queue.full():
+                    print("[FATAL] [Camera] RGB frame queue is still full, exiting")
                     os._exit(1)
                 continue
             
@@ -135,7 +135,7 @@ class CameraCapture(CaptureBase):
             # 防止CPU过载
             time.sleep(0.001)
 
-    def _capture_ir(self, ir_frame_queue, ir_frame_log_queue):
+    def _capture_ir(self, ir_frame_queue):
         """IR摄像头采集线程"""
         print("[Camera] Starting IR capture thread")
         self.ir_frame_count = 0
@@ -147,11 +147,11 @@ class CameraCapture(CaptureBase):
                 os._exit(1)
                 
             # 检查队列是否已满
-            if ir_frame_queue.full() or ir_frame_log_queue.full():
-                print("[Camera] IR frame queue(s) are full, skipping frame")
+            if ir_frame_queue.full():
+                print("[Camera] IR frame queue is full, skipping frame")
                 time.sleep(0.5)
-                if ir_frame_queue.full() or ir_frame_log_queue.full():
-                    print("[FATAL] [Camera] IR frame queue(s) are still full, exiting")
+                if ir_frame_queue.full():
+                    print("[FATAL] [Camera] IR frame queue is still full, exiting")
                     os._exit(1)
                 continue
             

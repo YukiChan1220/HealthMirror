@@ -17,6 +17,7 @@ from bluetooth.listen import Bluetooth
 from capture.camera import CameraCapture
 from preprocess.mp import MediaPipePreprocess
 from ecg.ecg import ECG
+from ppg.ppg import PPG
 from log.dlog import DataLogger
 from log.plog import PictureLogger
 from log.merge import FileMerger
@@ -168,7 +169,7 @@ class SessionManager:
             "images_dir": os.path.join(self.current_session_dir, "images"),
             "ir_images_dir": os.path.join(self.current_session_dir, "ir_images"),
             "ecg_log": os.path.join(self.current_session_dir, "ecg_log.csv"),
-            "rppg_log": os.path.join(self.current_session_dir, "rppg_log.csv"),
+            "ppg_log": os.path.join(self.current_session_dir, "ppg_log.csv"),
             "merged_log": os.path.join(self.current_session_dir, "merged_log.csv"),
             "normalized_log": os.path.join(self.current_session_dir, "normalized_log.csv"),
             "main_log": os.path.join(self.current_session_dir, "log.csv"),
@@ -257,25 +258,21 @@ class BluetoothHandler:
         patient_info = payload.get("patient_info")
         timestamp = payload.get("time")
         print(f"[BluetoothHandler] Start capture: patient={patient_info}, time={timestamp}")
+
+        self.current_upload_session = None
+        if timestamp is not None:
+            self.session_manager.set_reference_time(timestamp)
+        else:
+            print("[BluetoothHandler] Warning: No timestamp provided in start_capture command")
+        session_dir = self.session_manager.create_new_session(patient_info)
+        self.current_upload_session = session_dir
+        print(f"[BluetoothHandler] Current upload session set to: {session_dir}")
         
-        try:
-            self.current_upload_session = None
-            if timestamp is not None:
-                self.session_manager.set_reference_time(timestamp)
-            else:
-                print("[BluetoothHandler] Warning: No timestamp provided in start_capture command")
-            session_dir = self.session_manager.create_new_session(patient_info)
-            self.current_upload_session = session_dir
-            print(f"[BluetoothHandler] Current upload session set to: {session_dir}")
-            
-            if self.pipeline:
-                self.pipeline.update_session_paths(self.session_manager.get_session_paths())
-                self.pipeline.start()
-            
-            return "success"
-        except Exception as e:
-            print(f"[BluetoothHandler] Error starting capture: {e}")
-            return "failure"
+        if self.pipeline:
+            self.pipeline.update_session_paths(self.session_manager.get_session_paths())
+            self.pipeline.start()
+        
+        return "success"
 
     def _handle_stop_capture(self, payload):
         timestamp = payload.get("time")
@@ -484,6 +481,7 @@ class Pipeline:
         self.preprocess = config["preprocess"]
         self.ir_preprocess = config["ir_preprocess"]
         self.ecg = config["ecg"]
+        self.ppg = config["ppg"]
         self.interrupt_hotkey = config["interrupt_hotkey"]
         self.log = config["log"]
         self.perip_manager = config["perip_manager"]
@@ -492,23 +490,20 @@ class Pipeline:
         preprocess_queue_size = config.get("preprocess_queue_size", 128)
         log_queue_size = config.get("log_queue_size", 512)
         ecg_queue_size = config.get("ecg_queue_size", 1024)
+        ppg_queue_size = config.get("ppg_queue_size", 1024)
 
         self.frame_queue = queue.Queue(maxsize=frame_queue_size)
         self.raw_frame_queue = queue.Queue(maxsize=frame_queue_size)
         self.ir_frame_queue = queue.Queue(maxsize=frame_queue_size)
         self.raw_ir_frame_queue = queue.Queue(maxsize=frame_queue_size)
-        self.preprocess_queue = queue.Queue(maxsize=preprocess_queue_size)
-        self.result_queue = queue.Queue(maxsize=config["max_queue_size"])
-        self.log_result_queue = queue.Queue(maxsize=log_queue_size)
-        self.main_queue = queue.Queue(maxsize=config["max_queue_size"])
         self.log_queue = queue.Queue(maxsize=log_queue_size)
         self.ir_log_queue = queue.Queue(maxsize=log_queue_size)
         self.log_queue1 = queue.Queue(maxsize=log_queue_size)
         self.ir_log_queue1 = queue.Queue(maxsize=log_queue_size)
-        self.raw_ecg_queue = queue.Queue(maxsize=ecg_queue_size)
-        self.display_queue = queue.Queue(maxsize=config["max_queue_size"])
+        self.ecg_queue = queue.Queue(maxsize=ecg_queue_size)
         self.monitor_ecg_queue = queue.Queue(maxsize=ecg_queue_size)
-        self.inference_results = []
+        self.ppg_queue = queue.Queue(maxsize=ppg_queue_size)    # (timestamp, red, ir, green)
+        self.monitor_ppg_queue = queue.Queue(maxsize=ppg_queue_size)
         self.max_display_points = config["max_display_points"]
         self.time_limit = config["time_limit"]
         self.threads = []
@@ -517,54 +512,39 @@ class Pipeline:
         global_vars.pipeline_running = False
         self.heart_rate_buffer = []
         
-        self.cached_frames = []
-        self.cached_timestamps = []
-        self.cache_lock = threading.Lock()
-        self.max_cached_frames = config.get("max_cached_frames", 18000)  # 限制缓存帧数（约10分钟@30fps）
-        # 添加显示相关属性
         self.last_display_update = 0
         self.display_update_interval = 1.0  # 每1秒更新一次显示
         
-        # 添加ECG质量监测相关属性
         self.ecg_buffer = []
-        self.ecg_window_size = config.get("ecg_window_size", 1024)  # 1 sec
-        self.ecg_quality = "normal"  # 初始质量状态
+        self.ecg_window_size = config.get("ecg_window_size", 1024)  # 2 sec
+        self.ecg_quality = "normal"
         self.ecg_quality_thresholds = {
-            "normal": 6000,    # 极差小于5000为正常
-            "warning": 8000,   # 极差5000-8000为警告
-            # 极差大于8000为错误
+            "normal": 6000,
+            "warning": 8000,
         }
-        # 在Pipeline.__init__方法中添加这些属性
         self.last_ecg_quality_display = 0
-        self.ecg_quality_display_interval = 3.0  # 每3秒显示一次ECG质量信息
-
-        # 添加心率计算相关属性
-        self.heart_rate_calculation_buffer = []  # 用于心率计算的ECG数据缓冲区
-        self.heart_rate_window_size = 10240  # 心率计算的窗口大小 (约10秒@512Hz)
+        self.ecg_quality_display_interval = 3.0 
+        self.heart_rate_calculation_buffer = []
+        self.heart_rate_window_size = 10240
         self.last_heart_rate_calculation = 0
-        self.heart_rate_calculation_interval = 2.0  # 每2秒计算一次心率
-        self.current_heart_rate = 0  # 当前计算出的心率
-        self.ecg_sampling_rate = 512  # ECG采样率，假设为512Hz
-        
-        # 添加ECG调试信息控制标志
-        self.enable_ecg_debug_output = True  # 控制ECG Range等调试信息的输出
+        self.heart_rate_calculation_interval = 2.0
+        self.current_heart_rate = 0 
+        self.ecg_sampling_rate = 512
+        self.enable_ecg_debug_output = True
 
-        # 添加队列监控相关属性
         self.enable_queue_monitoring = config.get("enable_queue_monitoring", True)
-        self.queue_monitor_interval = config.get("queue_monitor_interval", 3.0)  # 每5秒监控一次
+        self.queue_monitor_interval = config.get("queue_monitor_interval", 3.0)
         self.last_queue_monitor = 0
         
-        # 添加缓存日志控制属性
-        self.cache_log_interval = config.get("cache_log_interval", 3.0)  # 每10秒输出一次缓存信息
+        self.cache_log_interval = config.get("cache_log_interval", 3.0)
         self.last_cache_log = 0
         self.cache_frame_count = 0
         self.heart_rate_buffer = []
 
-        # Open CSV file in append mode and write header if it's empty
         if not os.path.exists(self.csv_file):
             with open(self.csv_file, mode='w', newline='') as file:
                 writer = csv.writer(file)
-                writer.writerow(['timestamp', 'inference_result'])  # Write header
+                writer.writerow(['timestamp', 'inference_result'])
 
         if self.log:
             print(f"[Pipeline] Pipeline initialized")
@@ -574,21 +554,23 @@ class Pipeline:
             if path_key in session_paths:
                 os.makedirs(session_paths[path_key], exist_ok=True)
 
-        for log_path in [session_paths["ecg_log"], session_paths["rppg_log"]]:
+        for log_path in [session_paths["ecg_log"], session_paths["ppg_log"]]:
             os.makedirs(os.path.dirname(log_path), exist_ok=True)
         
         self.ecglogger = DataLogger({
             "log_path": session_paths["ecg_log"],
-            "data_queue": self.raw_ecg_queue,
+            "data_name": ["ecg"],
+            "data_queue": self.ecg_queue,
         })
         
-        self.rppglogger = DataLogger({
-            "log_path": session_paths["rppg_log"],
-            "data_queue": self.log_result_queue,
+        self.ppglogger = DataLogger({
+            "log_path": session_paths["ppg_log"],
+            "data_name": ["ppg_red", "ppg_ir", "ppg_green"],
+            "data_queue": self.ppg_queue,
         })
         
         self.filemerger = FileMerger(
-            input_files=[session_paths["rppg_log"], session_paths["ecg_log"]], 
+            input_files=[(["ppg_red", "ppg_ir", "ppg_green"], session_paths["ppg_log"]), (["ecg"], session_paths["ecg_log"])],
             output_path=session_paths["merged_log"]
         )
         for video_path in [session_paths["video_path"], session_paths["ir_video_path"]]:
@@ -598,14 +580,14 @@ class Pipeline:
             "video_path": session_paths["video_path"],
             "data_queue": self.log_queue,
             "image_path": session_paths["images_dir"],
-            "image_type": "np"  # 使用numpy数组格式
+            "image_type": "np"  # cropped
         })
 
         self.irpicturelogger = PictureLogger({
             "video_path": session_paths["ir_video_path"],
             "data_queue": self.ir_log_queue,
             "image_path": session_paths["ir_images_dir"],
-            "image_type": "np"  # 使用numpy数组格式
+            "image_type": "np"  # cropped
         })
 
         self.raw_frame_logger = PictureLogger({
@@ -622,7 +604,6 @@ class Pipeline:
             "image_type": "raw"
         })
 
-        # 确保合并和归一化文件的目录存在
         for path in [session_paths["merged_log"], session_paths["normalized_log"]]:
             os.makedirs(os.path.dirname(path), exist_ok=True)
 
@@ -632,20 +613,6 @@ class Pipeline:
         )
         
         print(f"[Pipeline] Pipeline paths updated for session: {session_paths['session_dir']}")
-
-    def exchange_data(self, result_queue: queue.Queue, main_queue: queue.Queue) -> None:
-        while global_vars.pipeline_running:
-            try:
-                results, timestamps = result_queue.get(timeout=0.5)
-                for result, timestamp in zip(results, timestamps):
-                    main_queue.put([timestamp, result])
-            except queue.Empty:
-                # 队列为空时短暂休眠，减少CPU占用
-                time.sleep(0.01)
-                continue
-            except Exception as e:
-                print(f"[Pipeline] Error in exchange_data: {e}")
-                time.sleep(0.1)
 
     def monitor_queue_status(self):
         if not self.enable_queue_monitoring:
@@ -658,12 +625,11 @@ class Pipeline:
             queue_status = {
                 "frame_queue": self.frame_queue.qsize(),
                 "ir_frame_queue": self.ir_frame_queue.qsize(),
-                "preprocess_queue": self.preprocess_queue.qsize(),
                 "log_queue": self.log_queue.qsize(),
                 "ir_log_queue": self.ir_log_queue.qsize(),
-                "raw_ecg_queue": self.raw_ecg_queue.qsize(),
+                "ecg_queue": self.ecg_queue.qsize(),
+                "ppg_queue": self.ppg_queue.qsize(),
                 "monitor_ecg_queue": self.monitor_ecg_queue.qsize(),
-                "log_result_queue": self.log_result_queue.qsize(),
             }
             
             warnings = []
@@ -686,7 +652,7 @@ class Pipeline:
         except Exception as e:
             print(f"[Pipeline] Error monitoring queue status: {e}")
 
-    def results(self) -> None:
+    def monitor(self) -> None:
         while global_vars.pipeline_running and global_vars.data_acquisition_running:
             try:
                 self.monitor_queue_status()
@@ -829,13 +795,13 @@ class Pipeline:
         self.threads = [
             capture_thread := threading.Thread(
                 target=self.capture,
-                args=(self.frame_queue, self.raw_frame_queue, self.ir_frame_queue, self.raw_ir_frame_queue),
+                args=(self.frame_queue, self.ir_frame_queue, ),
                 daemon=True,
                 name="CaptureThread",
             ),
             preprocess_thread := threading.Thread(
                 target=self.preprocess,
-                args=(self.frame_queue, self.preprocess_queue, self.log_queue, self.log_queue1, self.config["batch_size"]),
+                args=(self.frame_queue, None, self.log_queue, self.log_queue1, self.config["batch_size"]),
                 daemon=True,
                 name="PreprocessThread",
             ),
@@ -847,15 +813,22 @@ class Pipeline:
             ),
             ecg_thread := threading.Thread(
                 target=self.ecg,
-                args=(self.raw_ecg_queue, self.monitor_ecg_queue),
+                args=(self.ecg_queue, self.monitor_ecg_queue),
                 daemon=True,
                 name="ECGThread",
             ),
+            ppg_thread := threading.Thread(
+                target=self.ppg,
+                args=(self.ppg_queue, self.monitor_ppg_queue),
+                daemon=True,
+                name="PPGThread",
+            ),
+            
         ]
 
-        self.threads.append(results_thread := threading.Thread(target=self.results, daemon=True, name="ResultsThread"))
+        self.threads.append(monitor_thread := threading.Thread(target=self.monitor, daemon=True, name="ResultsThread"))
         self.threads.append(ecg_log_thread := threading.Thread(target=self.ecglogger, daemon=True, name="ECGLogThread"))
-        self.threads.append(rppg_log_thread := threading.Thread(target=self.rppglogger, daemon=True, name="RPPGLogThread"))
+        self.threads.append(ppg_log_thread := threading.Thread(target=self.ppglogger, daemon=True, name="PPGLogThread"))
         self.threads.append(picture_log_thread := threading.Thread(target=self.picturelogger, daemon=True, name="PictureLogThread"))
         self.threads.append(ir_picture_log_thread := threading.Thread(target=self.irpicturelogger, daemon=True, name="IRPictureLogThread"))
         self.threads.append(raw_frame_log_thread := threading.Thread(target=self.raw_frame_logger, daemon=True, name="RawPictureLogThread"))
@@ -901,6 +874,12 @@ class Pipeline:
                 print("[Pipeline] ECG resources cleaned up")
         except Exception as e:
             print(f"[Pipeline] Error cleaning up ECG: {e}")
+        try:
+            if hasattr(self.ppg, 'cleanup'):
+                self.ppg.cleanup()
+                print("[Pipeline] PPG resources cleaned up")
+        except Exception as e:
+            print(f"[Pipeline] Error cleaning up PPG: {e}")
         time.sleep(0.5)
 
         print("[Pipeline] Waiting for log queues to be processed...")
@@ -908,8 +887,7 @@ class Pipeline:
         start_time = time.time()
         
         while (time.time() - start_time) < max_wait_time:
-            if (self.log_result_queue.empty() and 
-                self.raw_ecg_queue.empty() and 
+            if (self.ecg_queue.empty() and 
                 self.log_queue.empty() and 
                 self.ir_log_queue.empty()):
                 print("[Pipeline] All log queues are empty")
@@ -933,7 +911,7 @@ class Pipeline:
                         print("[Pipeline] Timestamp conversion completed successfully")
                         if self.log:
                             print("[Pipeline] Verifying timestamp conversion...")
-                            for filename in ["ecg_log.csv", "rppg_log.csv", "log.csv"]:
+                            for filename in ["ecg_log.csv", "ppg_log.csv", "log.csv"]:
                                 file_path = os.path.join(current_session_dir, filename)
                                 if os.path.exists(file_path):
                                     converter.verify_conversion(file_path)
@@ -967,14 +945,9 @@ class Pipeline:
         queues = {
             "frame_queue": self.frame_queue,
             "ir_frame_queue": self.ir_frame_queue,
-            "preprocess_queue": self.preprocess_queue,
-            "result_queue": self.result_queue,
-            "main_queue": self.main_queue,
             "log_queue": self.log_queue,
             "ir_log_queue": self.ir_log_queue,
-            "log_result_queue": self.log_result_queue,
-            "raw_ecg_queue": self.raw_ecg_queue,
-            "display_queue": self.display_queue,
+            "ecg_queue": self.ecg_queue,
             "monitor_ecg_queue": self.monitor_ecg_queue
         }
         for name, q in queues.items():
@@ -1021,7 +994,6 @@ class Pipeline:
             except Exception as e:
                 print(f"[Pipeline] Error joining thread {thread.name}: {e}")
         
-        self.inference_results = []
         self.hr = None
         self.heart_rate_buffer = []
         self.heart_rate_calculation_buffer = []
@@ -1032,12 +1004,6 @@ class Pipeline:
         global_vars.pipeline_running = False
         global_vars.data_acquisition_running = False
         
-        with self.cache_lock:
-            cached_count = len(self.cached_frames)
-            self.cached_frames.clear()
-            self.cached_timestamps.clear()
-            print(f"[Pipeline] Cleared {cached_count} cached frames and timestamps")
-
         self.last_display_update = 0
         self.last_ecg_quality_display = 0
         self.last_queue_monitor = 0  # 重置队列监控时间
@@ -1064,10 +1030,13 @@ def main():
     print("[Main] Loading Peripherals...")
     peripherals = Peripherals()
     ecg = ECG({
-        "bmd101": {"serial_port": "/dev/ttyS0"},
+        "bmd101": {"serial_port": "/dev/ttyS3"},
         "max_queue_size": 512,
     })
-    peripmanager = PeripheralManager("/dev/ttyS3")
+    ppg = PPG({
+        "bus": 4,
+    })
+    peripmanager = PeripheralManager("/dev/ttyS4")
     print("[Main] Loading Peripherals...Done")
 
     print("[Main] Loading Camera...")
@@ -1075,11 +1044,9 @@ def main():
     ir_cap = cv2.VideoCapture(ir_cam)
     capture = CameraCapture(cap, ir_cap)
     
-    # 设置摄像头路径，用于重新初始化
     capture.set_camera_paths(rgb_cam, ir_cam)
     
     print("[Main] Loading Camera...Done")
-    #target_size = 36 if model_choice == "Step" else 32
     target_size = 128
     batch_size = 1
     print("[Main] Loading MediaPipe...")
@@ -1100,13 +1067,14 @@ def main():
         "preprocess": preprocess,
         "ir_preprocess": ir_preprocess,
         "ecg": ecg,
+        "ppg": ppg,
         "interrupt_hotkey": "esc",
         "max_queue_size": 512,
         "frame_queue_size": 256,
         "preprocess_queue_size": 256,
         "log_queue_size": 512,
         "ecg_queue_size": 1024,
-        "max_cached_frames": 18000,  # 约10分钟@30fps
+        "ppg_queue_size": 1024,
         "enable_queue_monitoring": True,
         "queue_monitor_interval": 5.0,
         "cache_log_interval": 10.0,  # 每10秒输出一次缓存信息
@@ -1150,17 +1118,11 @@ def main():
             
             if current_status != last_status:
                 if current_status:
-                    with pipeline.cache_lock:
-                        cached_count = len(pipeline.cached_frames)
-                    print(f"[Main] Caching mode active. Cached frames: {cached_count}")
+                    pass
                 else:
                     print("[Main] Pipeline stopped, waiting for commands...")
                 last_status = current_status
-            elif current_status and data_acquisition_status:  # 只在数据采集阶段显示缓存状态
-                with pipeline.cache_lock:
-                    cached_count = len(pipeline.cached_frames)
-                if cached_count > 0:  # 只在有缓存数据时显示
-                    print(f"[Main] Data acquisition active. Cached frames: {cached_count}")
+            
             time.sleep(1)
     except KeyboardInterrupt:
         print("[Main] Shutting down...")
@@ -1181,6 +1143,12 @@ def main():
     except Exception as e:
         print(f"[Main] Error releasing IR camera: {e}")
     
+    try:
+        ppg.disable()
+        print("[Main] PPG sensor disabled")
+    except Exception as e:
+        print(f"[Main] Error disabling PPG sensor: {e}")
+
     # 释放OpenCV资源
     try:
         cv2.destroyAllWindows()

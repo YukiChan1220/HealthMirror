@@ -10,17 +10,19 @@ class DataLogger():
         self.config = config
         self.file_path = config["log_path"]
         self.data_queue = config["data_queue"]
+        self.data_name = config.get("data_name", ["unknown"]) # list of column names
         self.lock = threading.Lock()
-        self.batch_size = config.get("batch_size", 100)  # Default batch size
-        self.flush_interval = config.get("flush_interval", 1.0)  # Seconds
+        self.batch_size = config.get("batch_size", 100)
+        self.flush_interval = config.get("flush_interval", 1.0)
         self.last_flush_time = time.time()
         self.buffer = []
-        with open(self.file_path, 'w'):
+        with open(self.file_path, 'w') as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(["timestamp"] + self.data_name)
             pass
 
     # log data to a CSV file in batches
     def data_log(self) -> None:
-        # Collect data from queue without holding the file lock
         batch_data = []
         while not self.data_queue.empty() and len(batch_data) < self.batch_size:
             try:
@@ -32,11 +34,7 @@ class DataLogger():
         
         if not batch_data:
             return
-            
-        # Append to internal buffer
         self.buffer.extend(batch_data)
-        
-        # Determine if we should flush based on buffer size or time
         current_time = time.time()
         should_flush = (len(self.buffer) >= self.batch_size or 
                         (current_time - self.last_flush_time) >= self.flush_interval)
@@ -47,13 +45,9 @@ class DataLogger():
     def _flush_buffer(self) -> None:
         if not self.buffer:
             return
-            
-        # Use StringIO for in-memory buffer before writing to disk
         output = StringIO()
         writer = csv.writer(output)
         writer.writerows(self.buffer)
-        
-        # Only lock when actually writing to file
         with self.lock:
             with open(self.file_path, 'a', newline='', buffering=8192) as csvfile:
                 csvfile.write(output.getvalue())
@@ -65,10 +59,8 @@ class DataLogger():
         try:
             while global_vars.pipeline_running or not self.data_queue.empty():
                 self.data_log()
-                # Small sleep to prevent CPU thrashing if queue is empty
                 if self.data_queue.empty():
                     time.sleep(0.01)
         finally:
-            # Ensure remaining data is written when thread exits
             if self.buffer:
                 self._flush_buffer()

@@ -116,9 +116,7 @@ class TimestampConverter:
         # 需要转换的文件列表
         files_to_convert = [
             "ecg_log.csv",
-            "rppg_log.csv", 
-            "log.csv",
-            "merged_log.csv"
+            "ppg_log.csv",
         ]
         ts_files_to_convert = [
             "video.avi.ts",

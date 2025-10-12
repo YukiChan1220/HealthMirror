@@ -5,14 +5,14 @@ import pandas as pd
 
 class FileMerger:
     def __init__(self, input_files: list, output_path: str) -> None:
-        self.input_files = input_files  # each element need to be (data_name, file_path)
-        # file format need to be (timestamp, value) with column name as (timestamp, data_name)
+        self.input_files = input_files  # each element need to be ([data_name], file_path)
+        # file format need to be (timestamp, value) with column name as (timestamp, data_name[0], data_name[1], ...)
         self.output_path = output_path
         self.heap = []
         self.last_values = dict()
-        for data_name, _ in input_files:
-            self.last_values[data_name] = None    # file name
-        self.max_values_length = 0
+        for data_names, _ in input_files:
+            for data_name in data_names:
+                self.last_values[data_name] = None    # file name
         with open(self.output_path, 'w'):
             pass
 
@@ -27,12 +27,10 @@ class FileMerger:
             print(f"[FileMerger] Loading {file} (size: {file_size} bytes)")
             
             try:
-                df = pd.read_csv(file, dtype={
-                    'timestamp': float,
-                    data_name: float
-                }) 
-                df["source"] = data_name
-                rows = df.values.tolist()   # format: (timestamp, value, source)
+                df = pd.read_csv(file, dtype=float)
+                timestamps = df.iloc[:, 0].to_numpy()
+                values = df.iloc[:, 1:].to_numpy().tolist()
+                rows = [[t, v, data_name] for t, v in zip(timestamps, values)]
                 row_count = len(rows)
                 self.heap.extend(rows)
                 print(f"[FileMerger] Loaded {row_count} rows from {file}")
@@ -51,15 +49,13 @@ class FileMerger:
         if not self.heap:
             print(f"[FileMerger] No data to write")
             return
-        if self.max_values_length == 0:
-            print(f"[FileMerger] Warning: No valid values found, using default length of 1")
-            self.max_values_length = 1
         
         try:
             rows = []
             while self.heap:
                 timestamp, value, source = heapq.heappop(self.heap)
-                self.last_values[source] = value
+                for v, s in zip(value, source):
+                    self.last_values[s] = v
                 row = [timestamp]
 
                 for data_name, last_value in self.last_values.items():

@@ -8,7 +8,7 @@ class Normalizer:
 
     def load(self):
         # Load CSV file
-        self.data = pd.read_csv(self.rawpath, header=None)
+        self.data = pd.read_csv(self.rawpath, dtype=float)
 
     def normalize(self):
         # Perform standard deviation normalization on all columns except the first
