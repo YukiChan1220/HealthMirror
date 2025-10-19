@@ -34,6 +34,7 @@ class ECG(ECGBase):
             if ecg_data is not None:
                 raw_ecg_queue.put(ecg_data)
                 monitor_ecg_queue.put(ecg_data)
-            # 添加短暂休眠，减少CPU占用并允许线程检查停止标志
+            else:
+                time.sleep(0.001)
         
         print("[ECG] ECG thread stopped - data acquisition finished")

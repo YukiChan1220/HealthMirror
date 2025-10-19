@@ -56,7 +56,6 @@ class SessionManager:
         os.makedirs(self.base_data_dir, exist_ok=True)
     
     def reset_session(self):
-        """重置当前会话状态"""
         self.current_session_dir = None
         self.current_patient_id = None
         self.patient_info = None
@@ -172,7 +171,6 @@ class SessionManager:
             "ppg_log": os.path.join(self.current_session_dir, "ppg_log.csv"),
             "merged_log": os.path.join(self.current_session_dir, "merged_log.csv"),
             "normalized_log": os.path.join(self.current_session_dir, "normalized_log.csv"),
-            "main_log": os.path.join(self.current_session_dir, "log.csv"),
         }
     
     def get_total_sessions(self):
@@ -487,7 +485,6 @@ class Pipeline:
         self.perip_manager = config["perip_manager"]
         self.session_manager = session_manager
         frame_queue_size = config.get("frame_queue_size", 128)
-        preprocess_queue_size = config.get("preprocess_queue_size", 128)
         log_queue_size = config.get("log_queue_size", 512)
         ecg_queue_size = config.get("ecg_queue_size", 1024)
         ppg_queue_size = config.get("ppg_queue_size", 1024)
@@ -504,16 +501,16 @@ class Pipeline:
         self.monitor_ecg_queue = queue.Queue(maxsize=ecg_queue_size)
         self.ppg_queue = queue.Queue(maxsize=ppg_queue_size)    # (timestamp, red, ir, green)
         self.monitor_ppg_queue = queue.Queue(maxsize=ppg_queue_size)
+        self.display_queue = queue.Queue(maxsize=4)
         self.max_display_points = config["max_display_points"]
         self.time_limit = config["time_limit"]
         self.threads = []
         self.hr = None
-        self.csv_file = config["log_path"]
         global_vars.pipeline_running = False
         self.heart_rate_buffer = []
         
         self.last_display_update = 0
-        self.display_update_interval = 1.0  # 每1秒更新一次显示
+        self.display_update_interval = 1.0
         
         self.ecg_buffer = []
         self.ecg_window_size = config.get("ecg_window_size", 1024)  # 2 sec
@@ -538,13 +535,7 @@ class Pipeline:
         
         self.heart_rate_buffer = []
 
-        if not os.path.exists(self.csv_file):
-            with open(self.csv_file, mode='w', newline='') as file:
-                writer = csv.writer(file)
-                writer.writerow(['timestamp', 'inference_result'])
-
-        if self.log:
-            print(f"[Pipeline] Pipeline initialized")
+        print(f"[Pipeline] Pipeline initialized")
 
     def update_session_paths(self, session_paths):
         for path_key in ["session_dir", "images_dir", "ir_images_dir"]:
@@ -659,9 +650,11 @@ class Pipeline:
                     if self.current_heart_rate > 0:
                         print(f"[Pipeline] ECG Quality: {self.ecg_quality}, Heart Rate: {self.current_heart_rate:.1f} BPM (caching mode)")
                     else:
-                        print(f"[Pipeline] ECG Quality: {self.ecg_quality} (caching mode, calculating heart rate...)")
+                        print(f"[Pipeline] ECG Quality: {self.ecg_quality} (calculating heart rate...)")
                     self.last_ecg_quality_display = current_time
-                time.sleep(0.1)
+                if self.display_queue.full():
+                    self.display_queue.get_nowait()
+                # self.display_queue.put(("data", 0, 0)) #self.monitor_ppg_queue.get()))
                 
             except Exception as e:
                 print(f"[Pipeline] Error in results processing: {e}")
@@ -671,11 +664,8 @@ class Pipeline:
         try:
             while not self.monitor_ecg_queue.empty():
                 try:
-                    ecg_data = self.monitor_ecg_queue.get_nowait()
-                    if isinstance(ecg_data, (list, tuple)) and len(ecg_data) > 1:
-                        ecg_value = ecg_data[1]
-                    else:
-                        ecg_value = float(ecg_data)
+                    _, ecg_value = self.monitor_ecg_queue.get_nowait()
+                    
                     self.ecg_buffer.append(ecg_value)
                     if len(self.ecg_buffer) > self.ecg_window_size:
                         self.ecg_buffer.pop(0)
@@ -697,7 +687,8 @@ class Pipeline:
                     self.ecg_quality = "warning"
                 else:
                     self.ecg_quality = "error"
-                if self.log and self.enable_ecg_debug_output:
+                current_time = time.time()
+                if self.log and self.enable_ecg_debug_output and current_time - self.last_ecg_quality_display >= self.ecg_quality_display_interval:
                     print(f"[Pipeline] ECG Range: {ecg_range:.1f}, Quality: {self.ecg_quality}")
             
             # hr calculation
@@ -766,7 +757,9 @@ class Pipeline:
         try:
             if global_vars.data_acquisition_running and self.perip_manager and heart_rate is not None:
                 hr_display = max(30, min(200, int(round(heart_rate))))
-                self.perip_manager.refresh_display(hr_display)
+                if self.display_queue.full():
+                    self.display_queue.get_nowait()
+                self.display_queue.put(("hr", hr_display, None))
                 print(f"[Pipeline] Heart rate displayed: {hr_display} BPM")
         except Exception as e:
             print(f"[Pipeline] Error updating heart rate display: {e}")
@@ -824,6 +817,7 @@ class Pipeline:
         ]
 
         self.threads.append(monitor_thread := threading.Thread(target=self.monitor, daemon=True, name="ResultsThread"))
+        self.threads.append(display_thread := threading.Thread(target=self.perip_manager, args=(self.display_queue,), daemon=True, name="DisplayThread"))
         self.threads.append(ecg_log_thread := threading.Thread(target=self.ecglogger, daemon=True, name="ECGLogThread"))
         self.threads.append(ppg_log_thread := threading.Thread(target=self.ppglogger, daemon=True, name="PPGLogThread"))
         self.threads.append(picture_log_thread := threading.Thread(target=self.picturelogger, daemon=True, name="PictureLogThread"))
@@ -855,7 +849,6 @@ class Pipeline:
         self.enable_ecg_debug_output = False
         try:
             if self.perip_manager:
-                self.perip_manager.refresh_display(1111)
                 print("[Pipeline] Display cleared")
         except Exception as e:
             print(f"[Pipeline] Error clearing display: {e}")
@@ -908,7 +901,7 @@ class Pipeline:
                         print("[Pipeline] Timestamp conversion completed successfully")
                         if self.log:
                             print("[Pipeline] Verifying timestamp conversion...")
-                            for filename in ["ecg_log.csv", "ppg_log.csv", "log.csv"]:
+                            for filename in ["ecg_log.csv", "ppg_log.csv"]:
                                 file_path = os.path.join(current_session_dir, filename)
                                 if os.path.exists(file_path):
                                     converter.verify_conversion(file_path)
@@ -935,7 +928,6 @@ class Pipeline:
         time.sleep(1)
         self.clear()
         print("[Pipeline] Pipeline stopped")
-        self.perip_manager.refresh_display(0)
 
     def clear(self):
         print("[Pipeline] Clearing queues before joining threads...")
@@ -945,6 +937,8 @@ class Pipeline:
             "log_queue": self.log_queue,
             "ir_log_queue": self.ir_log_queue,
             "ecg_queue": self.ecg_queue,
+            "ppg_queue": self.ppg_queue,
+            "display_queue": self.display_queue,
             "monitor_ecg_queue": self.monitor_ecg_queue
         }
         for name, q in queues.items():
@@ -958,39 +952,16 @@ class Pipeline:
                 print(f"[Pipeline] Error clearing {name}: {e}")
         
         print("[Pipeline] Queues cleared, now joining threads...")
-        picture_log_threads = [thread for thread in self.threads if "PictureLogThread" in thread.name]
-        capture_threads = [thread for thread in self.threads if "CaptureThread" in thread.name]
-        other_threads = [thread for thread in self.threads if "PictureLogThread" not in thread.name and "CaptureThread" not in thread.name]
-        for thread in other_threads:
+        for thread in self.threads:
             try:
-                thread.join(timeout=2)
-                if thread.is_alive():
-                    print(f"[Pipeline] Warning: Thread {thread.name} did not join within timeout")
-                else:
-                    print(f"[Pipeline] Thread {thread.name} joined successfully")
-            except Exception as e:
-                print(f"[Pipeline] Error joining thread {thread.name}: {e}")
-        for thread in capture_threads:
-            try:
-                print(f"[Pipeline] Waiting for {thread.name} to release camera resources...")
-                thread.join(timeout=5)
-                if thread.is_alive():
-                    print(f"[Pipeline] Warning: Thread {thread.name} did not join within timeout")
-                else:
-                    print(f"[Pipeline] Thread {thread.name} joined successfully")
-            except Exception as e:
-                print(f"[Pipeline] Error joining thread {thread.name}: {e}")
-        for thread in picture_log_threads:
-            try:
-                print(f"[Pipeline] Waiting for {thread.name} to complete video creation...")
                 thread.join(timeout=10)
                 if thread.is_alive():
-                    print(f"[Pipeline] Warning: Thread {thread.name} did not join within timeout")
+                    print(f"[Pipeline] Warning: Thread {thread.name} did not terminate in time")
                 else:
-                    print(f"[Pipeline] Thread {thread.name} joined successfully")
+                    print(f"[Pipeline] Thread {thread.name} has terminated")
             except Exception as e:
                 print(f"[Pipeline] Error joining thread {thread.name}: {e}")
-        
+
         self.hr = None
         self.heart_rate_buffer = []
         self.heart_rate_calculation_buffer = []
@@ -1011,13 +982,12 @@ class Pipeline:
 
 
 def main():
-    log_path, time_limit = "./log.csv", 60
+    time_limit = 60
     rgb_cam = '/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._RGB_CAMERA_SN0008-video-index0'
     ir_cam = '/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB_2.0_Camera_SN0001-video-index0'
 
     print("[Main] RGB Camera:", rgb_cam)
     print("[Main] IR Camera", ir_cam)
-    print("[Main] Log Path:", log_path)
     print("[Main] Time Limit:", time_limit)
 
     print("[Main] Loading Peripherals...")
@@ -1028,6 +998,7 @@ def main():
     })
     ppg = PPG({
         "bus": 4,
+        "monitor": True,
     })
     peripmanager = PeripheralManager("/dev/ttyS4")
     print("[Main] Loading Peripherals...Done")
@@ -1070,11 +1041,10 @@ def main():
         "ppg_queue_size": 1024,
         "enable_queue_monitoring": True,
         "queue_monitor_interval": 5.0,
-        "cache_log_interval": 10.0,  # 每10秒输出一次缓存信息
+        "cache_log_interval": 10.0,
         "batch_size": batch_size,
         "max_display_points": 128,
         "time_limit": time_limit,
-        "log_path": log_path,
         "fps": 30,
         "perip_manager": peripmanager,
         "log": True,

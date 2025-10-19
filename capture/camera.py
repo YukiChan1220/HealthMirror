@@ -88,7 +88,7 @@ class CameraCapture(CaptureBase):
         """RGB摄像头采集线程"""
         print("[Camera] Starting RGB capture thread")
         self.rgb_frame_count = 0
-        
+        last_log_count = 0
         while not self.stop_event.is_set() and global_vars.pipeline_running and global_vars.data_acquisition_running:
             # 检查摄像头状态
             if not self.cap or not self.cap.isOpened():
@@ -120,7 +120,9 @@ class CameraCapture(CaptureBase):
                     
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 self.rgb_frame_count += 1
-                print(f"[Camera] RGB frame count: {self.rgb_frame_count}")
+                if self.rgb_frame_count - last_log_count >= 30:
+                    last_log_count = self.rgb_frame_count
+                    print(f"[Camera] RGB frame count: {self.rgb_frame_count}")
                 
                 # 放入队列
                 try:
@@ -139,7 +141,8 @@ class CameraCapture(CaptureBase):
         """IR摄像头采集线程"""
         print("[Camera] Starting IR capture thread")
         self.ir_frame_count = 0
-        
+        last_log_count = 0
+
         while not self.stop_event.is_set() and global_vars.pipeline_running and global_vars.data_acquisition_running:
             # 检查摄像头状态
             if not self.ir_cap or not self.ir_cap.isOpened():
@@ -171,8 +174,10 @@ class CameraCapture(CaptureBase):
                     
                 ir_frame = cv2.cvtColor(ir_frame, cv2.COLOR_BGR2RGB) # TODO: color conversion may not be necessary for IR frames
                 self.ir_frame_count += 1
-                print(f"[Camera] IR frame count: {self.ir_frame_count}")
-                
+                if self.ir_frame_count - last_log_count >= 30:
+                    last_log_count = self.ir_frame_count
+                    print(f"[Camera] IR frame count: {self.ir_frame_count}")
+
                 # 放入队列
                 try:
                     ir_frame_queue.put((ir_frame, timestamp), timeout=0.1)
