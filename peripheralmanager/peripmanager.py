@@ -16,7 +16,7 @@ class PeripheralManager(PeripheralManagerBase):
                 baudrate=115200,
                 timeout=1
             )
-            self.serial_port.flushInput()
+            self.serial_port.reset_input_buffer()
             print(f"[PeripheralManager] Initialized with serial port: {serial_port}")
         except Exception as e:
             print(f"[FATAL] [PeripheralManager] Serial port initialization failed: {e}, exiting")
@@ -58,6 +58,14 @@ class PeripheralManager(PeripheralManagerBase):
         except Exception as e:
             print(f"[PeripheralManager] Error sending HR data: {e}")
 
+    def refresh_data(self, data: tuple):
+        if global_vars.data_acquisition_running:
+            data_type, ecg, ppg = data
+            if data_type == "hr":
+                self.refresh_hr(ecg)
+            elif data_type == "data":
+                self.refresh_curve(ecg, ppg)
+
     # automatically fetch data from the queue
     # data format: (type("hr" or "data"), ecg, ppg)
     def __call__(self, data_queue: Queue):
@@ -69,5 +77,6 @@ class PeripheralManager(PeripheralManagerBase):
                 elif data_type == "data":
                     self.refresh_curve(ecg, ppg)
             except queue.Empty:
+                time.sleep(0.05)
                 continue
             

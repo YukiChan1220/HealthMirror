@@ -10,7 +10,7 @@ import csv
 import json
 import gc
 from datetime import datetime
-from scipy.signal import butter, filtfilt, welch
+from scipy.signal import butter, filtfilt, welch, find_peaks
 
 import global_vars
 from bluetooth.listen import Bluetooth
@@ -498,10 +498,10 @@ class Pipeline:
         self.log_queue1 = queue.Queue(maxsize=log_queue_size)
         self.ir_log_queue1 = queue.Queue(maxsize=log_queue_size)
         self.ecg_queue = queue.Queue(maxsize=ecg_queue_size)
-        self.monitor_ecg_queue = queue.Queue(maxsize=ecg_queue_size)
+        self.monitor_ecg_queue = queue.Queue()#maxsize=ecg_queue_size)
         self.ppg_queue = queue.Queue(maxsize=ppg_queue_size)    # (timestamp, red, ir, green)
         self.monitor_ppg_queue = queue.Queue(maxsize=ppg_queue_size)
-        self.display_queue = queue.Queue(maxsize=4)
+        self.display_queue = queue.Queue(maxsize=256)
         self.max_display_points = config["max_display_points"]
         self.time_limit = config["time_limit"]
         self.threads = []
@@ -650,11 +650,12 @@ class Pipeline:
                     if self.current_heart_rate > 0:
                         print(f"[Pipeline] ECG Quality: {self.ecg_quality}, Heart Rate: {self.current_heart_rate:.1f} BPM (caching mode)")
                     else:
-                        print(f"[Pipeline] ECG Quality: {self.ecg_quality} (calculating heart rate...)")
+                        print(f"[Pipeline] ECG Quality: {self.ecg_quality} (calculating heart rate...{len(self.heart_rate_calculation_buffer)} samples cached)")
                     self.last_ecg_quality_display = current_time
+                time.sleep(0.1)
                 if self.display_queue.full():
                     self.display_queue.get_nowait()
-                # self.display_queue.put(("data", 0, 0)) #self.monitor_ppg_queue.get()))
+                self.display_queue.put(("data", 0, 0)) #self.monitor_ppg_queue.get()))
                 
             except Exception as e:
                 print(f"[Pipeline] Error in results processing: {e}")
@@ -687,8 +688,7 @@ class Pipeline:
                     self.ecg_quality = "warning"
                 else:
                     self.ecg_quality = "error"
-                current_time = time.time()
-                if self.log and self.enable_ecg_debug_output and current_time - self.last_ecg_quality_display >= self.ecg_quality_display_interval:
+                if self.log and self.enable_ecg_debug_output:
                     print(f"[Pipeline] ECG Range: {ecg_range:.1f}, Quality: {self.ecg_quality}")
             
             # hr calculation
@@ -720,13 +720,11 @@ class Pipeline:
             ecg_data = np.array(self.heart_rate_calculation_buffer[-data_length:])
             data_duration = data_length / self.ecg_sampling_rate
             confidence_factor = min(1.0, data_duration / 20.0)
-            from scipy.signal import butter, filtfilt
             nyquist = self.ecg_sampling_rate / 2
             low_cutoff = 0.5 / nyquist
             high_cutoff = 40 / nyquist
             b, a = butter(3, [low_cutoff, high_cutoff], btype='band')
             filtered_ecg = filtfilt(b, a, ecg_data)
-            from scipy.signal import find_peaks
             threshold = np.std(filtered_ecg) * 1.4
             min_distance = int(self.ecg_sampling_rate * 0.3)
             peaks, _ = find_peaks(filtered_ecg, height=threshold, distance=min_distance)
@@ -757,9 +755,10 @@ class Pipeline:
         try:
             if global_vars.data_acquisition_running and self.perip_manager and heart_rate is not None:
                 hr_display = max(30, min(200, int(round(heart_rate))))
-                if self.display_queue.full():
-                    self.display_queue.get_nowait()
-                self.display_queue.put(("hr", hr_display, None))
+                #if self.display_queue.full():
+                #    self.display_queue.get_nowait()
+                # self.display_queue.put(("hr", hr_display, None))
+                self.perip_manager.refresh_hr(hr_display)
                 print(f"[Pipeline] Heart rate displayed: {hr_display} BPM")
         except Exception as e:
             print(f"[Pipeline] Error updating heart rate display: {e}")
@@ -816,8 +815,8 @@ class Pipeline:
             
         ]
 
-        self.threads.append(monitor_thread := threading.Thread(target=self.monitor, daemon=True, name="ResultsThread"))
-        self.threads.append(display_thread := threading.Thread(target=self.perip_manager, args=(self.display_queue,), daemon=True, name="DisplayThread"))
+        self.threads.append(monitor_thread := threading.Thread(target=self.monitor, daemon=True, name="MonitorThread"))
+        # self.threads.append(display_thread := threading.Thread(target=self.perip_manager, args=(self.display_queue,), daemon=True, name="DisplayThread"))
         self.threads.append(ecg_log_thread := threading.Thread(target=self.ecglogger, daemon=True, name="ECGLogThread"))
         self.threads.append(ppg_log_thread := threading.Thread(target=self.ppglogger, daemon=True, name="PPGLogThread"))
         self.threads.append(picture_log_thread := threading.Thread(target=self.picturelogger, daemon=True, name="PictureLogThread"))

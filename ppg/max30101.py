@@ -63,7 +63,6 @@ class MAX30101(PPGBase):
             self._bus = SMBus(bus)
             self._own_bus = True
         self.config = config or MAX30101Config()
-        self._lock = threading.RLock()
         self._enabled = False
         self._validate_part()
         self.configure(self.config)
@@ -82,23 +81,20 @@ class MAX30101(PPGBase):
             self._bus.close()
 
     def enable(self) -> None:
-        with self._lock:
-            self._write_reg(self._REG_MODE_CONFIG, self._LED_MODE_MAP[self.config.led_mode])
-            self._clear_fifo()
-            self._enabled = True
+        self._write_reg(self._REG_MODE_CONFIG, self._LED_MODE_MAP[self.config.led_mode])
+        self._clear_fifo()
+        self._enabled = True
 
     def disable(self) -> None:
-        with self._lock:
-            if not self._enabled:
-                return
-            mode = self._read_reg(self._REG_MODE_CONFIG)
-            self._write_reg(self._REG_MODE_CONFIG, mode | 0x80)
-            self._enabled = False
+        if not self._enabled:
+            return
+        mode = self._read_reg(self._REG_MODE_CONFIG)
+        self._write_reg(self._REG_MODE_CONFIG, mode | 0x80)
+        self._enabled = False
 
     def reset(self) -> None:
-        with self._lock:
-            self._write_reg(self._REG_MODE_CONFIG, 0x40)
-            time.sleep(0.01)
+        self._write_reg(self._REG_MODE_CONFIG, 0x40)
+        time.sleep(0.01)
 
     def configure(self, config: MAX30101Config) -> None:
         if config.led_mode not in self._LED_MODE_MAP:
@@ -113,31 +109,29 @@ class MAX30101(PPGBase):
             raise ValueError("Unsupported sample average")
 
         self.config = config
-        with self._lock:
-            self.disable()
-            self._write_reg(self._REG_FIFO_CONFIG, self._SAMPLE_AVERAGE_MAP[config.sample_average] | (0x10 if config.fifo_rollover else 0x00) | 0x0F)
-            self._write_reg(
-                self._REG_SPO2_CONFIG,
-                self._ADC_RANGE_MAP[config.adc_range] | self._SAMPLE_RATE_MAP[config.sample_rate_hz] | self._PULSE_WIDTH_MAP[config.pulse_width],
-            )
-            self._write_reg(self._REG_LED1_PA, min(config.led_currents[0], 0xFF))
-            self._write_reg(self._REG_LED2_PA, min(config.led_currents[1], 0xFF))
-            self._write_reg(self._REG_LED3_PA, min(config.led_currents[2], 0xFF))
-            if config.led_mode == 3:
-                self._write_reg(self._REG_MULTI_LED_CTRL1, 0x21)
-                self._write_reg(self._REG_MULTI_LED_CTRL2, 0x03)
-            else:
-                self._write_reg(self._REG_MULTI_LED_CTRL1, 0x21)
-                self._write_reg(self._REG_MULTI_LED_CTRL2, 0x00)
-            self._clear_fifo()
-            if self._enabled:
-                self.enable()
+        self.disable()
+        self._write_reg(self._REG_FIFO_CONFIG, self._SAMPLE_AVERAGE_MAP[config.sample_average] | (0x10 if config.fifo_rollover else 0x00) | 0x0F)
+        self._write_reg(
+            self._REG_SPO2_CONFIG,
+            self._ADC_RANGE_MAP[config.adc_range] | self._SAMPLE_RATE_MAP[config.sample_rate_hz] | self._PULSE_WIDTH_MAP[config.pulse_width],
+        )
+        self._write_reg(self._REG_LED1_PA, min(config.led_currents[0], 0xFF))
+        self._write_reg(self._REG_LED2_PA, min(config.led_currents[1], 0xFF))
+        self._write_reg(self._REG_LED3_PA, min(config.led_currents[2], 0xFF))
+        if config.led_mode == 3:
+            self._write_reg(self._REG_MULTI_LED_CTRL1, 0x21)
+            self._write_reg(self._REG_MULTI_LED_CTRL2, 0x03)
+        else:
+            self._write_reg(self._REG_MULTI_LED_CTRL1, 0x21)
+            self._write_reg(self._REG_MULTI_LED_CTRL2, 0x00)
+        self._clear_fifo()
+        if self._enabled:
+            self.enable()
 
     def read_sample(self) -> PPGSample:
-        with self._lock:
-            if not self._enabled:
-                raise RuntimeError("Sensor is not enabled")
-            sample = self._read_fifo()
+        if not self._enabled:
+            raise RuntimeError("Sensor is not enabled")
+        sample = self._read_fifo()
         return PPGSample(time.time(), *sample)
 
     def read_samples(self, count: int) -> Iterable[PPGSample]:
@@ -145,11 +139,10 @@ class MAX30101(PPGBase):
             yield self.read_sample()
 
     def temperature(self) -> float:
-        with self._lock:
-            self._write_reg(self._REG_TEMP_CONFIG, 0x01)
-            time.sleep(0.01)
-            integer = self._read_reg(self._REG_TEMP_INT)
-            fraction = self._read_reg(self._REG_TEMP_FRAC)
+        self._write_reg(self._REG_TEMP_CONFIG, 0x01)
+        time.sleep(0.01)
+        integer = self._read_reg(self._REG_TEMP_INT)
+        fraction = self._read_reg(self._REG_TEMP_FRAC)
         return integer + (fraction * 0.0625)
 
     def _read_fifo(self) -> Tuple[Optional[int], Optional[int], Optional[int]]:
