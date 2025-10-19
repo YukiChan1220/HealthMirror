@@ -9,6 +9,7 @@ import os
 import csv
 import json
 import gc
+from collections import deque
 from datetime import datetime
 from scipy.signal import butter, filtfilt, welch, find_peaks
 
@@ -486,7 +487,7 @@ class Pipeline:
         self.session_manager = session_manager
         frame_queue_size = config.get("frame_queue_size", 128)
         log_queue_size = config.get("log_queue_size", 512)
-        ecg_queue_size = config.get("ecg_queue_size", 1024)
+        ecg_queue_size = config.get("ecg_queue_size", 2048)
         ppg_queue_size = config.get("ppg_queue_size", 1024)
 
         self.frame_queue = queue.Queue(maxsize=frame_queue_size)
@@ -512,8 +513,8 @@ class Pipeline:
         self.last_display_update = 0
         self.display_update_interval = 1.0
         
-        self.ecg_buffer = []
         self.ecg_window_size = config.get("ecg_window_size", 1024)  # 2 sec
+        self.ecg_buffer = deque(maxlen=self.ecg_window_size)
         self.ecg_quality = "normal"
         self.ecg_quality_thresholds = {
             "normal": 6000,
@@ -521,8 +522,8 @@ class Pipeline:
         }
         self.last_ecg_quality_display = 0
         self.ecg_quality_display_interval = 3.0 
-        self.heart_rate_calculation_buffer = []
         self.heart_rate_window_size = 10240
+        self.heart_rate_calculation_buffer = deque(maxlen=self.heart_rate_window_size)
         self.last_heart_rate_calculation = 0
         self.heart_rate_calculation_interval = 2.0
         self.current_heart_rate = 0 
@@ -652,10 +653,10 @@ class Pipeline:
                     else:
                         print(f"[Pipeline] ECG Quality: {self.ecg_quality} (calculating heart rate...{len(self.heart_rate_calculation_buffer)} samples cached)")
                     self.last_ecg_quality_display = current_time
-                time.sleep(0.1)
-                if self.display_queue.full():
-                    self.display_queue.get_nowait()
-                self.display_queue.put(("data", 0, 0)) #self.monitor_ppg_queue.get()))
+                # time.sleep(0.1)
+                #if self.display_queue.full():
+                #    self.display_queue.get_nowait()
+                #self.display_queue.put(("data", 0, 0)) #self.monitor_ppg_queue.get()))
                 
             except Exception as e:
                 print(f"[Pipeline] Error in results processing: {e}")
@@ -668,11 +669,7 @@ class Pipeline:
                     _, ecg_value = self.monitor_ecg_queue.get_nowait()
                     
                     self.ecg_buffer.append(ecg_value)
-                    if len(self.ecg_buffer) > self.ecg_window_size:
-                        self.ecg_buffer.pop(0)
                     self.heart_rate_calculation_buffer.append(ecg_value)
-                    if len(self.heart_rate_calculation_buffer) > self.heart_rate_window_size:
-                        self.heart_rate_calculation_buffer.pop(0)
                         
                 except queue.Empty:
                     break
@@ -680,7 +677,7 @@ class Pipeline:
                     print(f"[Pipeline] Error processing ECG data: {e}")
                     continue
             if len(self.ecg_buffer) >= self.ecg_window_size:
-                ecg_array = np.array(self.ecg_buffer)
+                ecg_array = np.array(list(self.ecg_buffer))
                 ecg_range = np.max(ecg_array) - np.min(ecg_array)
                 if ecg_range <= self.ecg_quality_thresholds["normal"]:
                     self.ecg_quality = "normal"
@@ -717,7 +714,7 @@ class Pipeline:
             if len(self.heart_rate_calculation_buffer) < min_data_for_calculation:
                 return
             data_length = min(len(self.heart_rate_calculation_buffer), self.heart_rate_window_size)
-            ecg_data = np.array(self.heart_rate_calculation_buffer[-data_length:])
+            ecg_data = np.array(list(self.heart_rate_calculation_buffer)[-data_length:])
             data_duration = data_length / self.ecg_sampling_rate
             confidence_factor = min(1.0, data_duration / 20.0)
             nyquist = self.ecg_sampling_rate / 2
@@ -758,7 +755,7 @@ class Pipeline:
                 #if self.display_queue.full():
                 #    self.display_queue.get_nowait()
                 # self.display_queue.put(("hr", hr_display, None))
-                self.perip_manager.refresh_hr(hr_display)
+                #self.perip_manager.refresh_hr(hr_display)
                 print(f"[Pipeline] Heart rate displayed: {hr_display} BPM")
         except Exception as e:
             print(f"[Pipeline] Error updating heart rate display: {e}")
@@ -963,8 +960,8 @@ class Pipeline:
 
         self.hr = None
         self.heart_rate_buffer = []
-        self.heart_rate_calculation_buffer = []
-        self.ecg_buffer = []
+        self.heart_rate_calculation_buffer = deque(maxlen=self.heart_rate_window_size)
+        self.ecg_buffer = deque(maxlen=self.ecg_window_size)
         self.ecg_quality = "normal"
         self.enable_ecg_debug_output = True
 
@@ -1032,12 +1029,6 @@ def main():
         "ecg": ecg,
         "ppg": ppg,
         "interrupt_hotkey": "esc",
-        "max_queue_size": 512,
-        "frame_queue_size": 256,
-        "preprocess_queue_size": 256,
-        "log_queue_size": 512,
-        "ecg_queue_size": 1024,
-        "ppg_queue_size": 1024,
         "enable_queue_monitoring": True,
         "queue_monitor_interval": 5.0,
         "cache_log_interval": 10.0,
