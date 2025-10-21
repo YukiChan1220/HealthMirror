@@ -19,8 +19,7 @@ class PPG(PPGBase):
         if isinstance(config_obj, dict):
             config_obj = MAX30101Config(**config_obj)
         self.sensor = MAX30101(bus=bus, address=address, config=config_obj)
-        self.max_queue_size = config.get("max_queue_size", 512)
-        self.poll_interval = config.get("poll_interval", 0.005)
+        self.poll_interval = config.get("poll_interval", 0.002)
 
     def enable(self) -> None:
         self.sensor.enable()
@@ -47,11 +46,11 @@ class PPG(PPGBase):
         try:
             ppg_data = [0, 0, 0, 0]
             while global_vars.pipeline_running:
-                if time.time() - ppg_data[0] > self.poll_interval:
-                    ppg_data = self.read_ppg()
-                    if ppg_data is not None:
-                        raw_ppg_queue.put(ppg_data)
-                        if self.monitor:
-                            monitor_ppg_queue.put(ppg_data[2])
+                ppg_data = self.read_ppg()
+                if ppg_data is not None:
+                    raw_ppg_queue.put(ppg_data)
+                    if self.monitor:
+                        monitor_ppg_queue.put(ppg_data[2])
+                time.sleep(self.poll_interval)
         finally:
             self.disable()

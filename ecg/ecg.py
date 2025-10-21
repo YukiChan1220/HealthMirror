@@ -7,14 +7,11 @@ import global_vars
 class ECG(ECGBase):
     def __init__(self, config: dict) -> None:
         self.bmd101 = BMD101(config["bmd101"]["serial_port"])
-        self.max_queue_size = 512
 
     def stop_capture(self):
-        """停止ECG数据采集 - 现在通过全局变量控制"""
         print("[ECG] Stop capture requested")
     
     def cleanup(self):
-        """清理ECG资源"""
         print("[ECG] ECG resources cleaned up")
 
     def read_bmd101(self) -> None:
