@@ -585,7 +585,6 @@ class Pipeline:
             "image_path": session_paths["images_dir"].replace("images", "raw_images"),
             "image_type": "raw"
         })
-
         self.raw_ir_frame_logger = PictureLogger({
             "video_path": session_paths["ir_video_path"].replace("ir_video.mkv", "raw_ir_video.mkv"),
             "data_queue": self.ir_log_queue1,
