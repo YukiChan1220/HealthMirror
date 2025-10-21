@@ -13,7 +13,7 @@ class PPG(PPGBase):
         sensor_cfg = config
         bus = sensor_cfg.get("bus", 4)
         address = sensor_cfg.get("address", MAX30101.DEFAULT_ADDRESS)
-        self.monitor = sensor_cfg.get("monitor", True)
+        self.monitor = sensor_cfg.get("monitor", False)
         config_obj = sensor_cfg.get("config")
 
         if isinstance(config_obj, dict):
@@ -52,8 +52,6 @@ class PPG(PPGBase):
                     if ppg_data is not None:
                         raw_ppg_queue.put(ppg_data)
                         if self.monitor:
-                            if monitor_ppg_queue.full():
-                                monitor_ppg_queue.get_nowait()
                             monitor_ppg_queue.put(ppg_data[2])
         finally:
             self.disable()

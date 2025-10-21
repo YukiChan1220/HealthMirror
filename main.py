@@ -624,11 +624,11 @@ class Pipeline:
             warnings = []
             for queue_name, size in queue_status.items():
                 queue_obj = getattr(self, queue_name)
-                if hasattr(queue_obj, '_maxsize') and queue_obj._maxsize > 0:
-                    usage_percent = (size / queue_obj._maxsize) * 100
+                if hasattr(queue_obj, 'maxsize') and queue_obj.maxsize > 0:
+                    usage_percent = (size / queue_obj.maxsize) * 100
                     if usage_percent > 80:
-                        warnings.append(f"{queue_name}: {size}/{queue_obj._maxsize} ({usage_percent:.1f}%)")
-            
+                        warnings.append(f"{queue_name}: {size}/{queue_obj.maxsize} ({usage_percent:.1f}%)")
+
             if warnings:
                 print(f"[Pipeline] Queue warnings: {', '.join(warnings)}")
             elif self.log:
@@ -653,7 +653,7 @@ class Pipeline:
                     else:
                         print(f"[Pipeline] ECG Quality: {self.ecg_quality} (calculating heart rate...{len(self.heart_rate_calculation_buffer)} samples cached)")
                     self.last_ecg_quality_display = current_time
-                # time.sleep(0.1)
+                time.sleep(0.1)
                 #if self.display_queue.full():
                 #    self.display_queue.get_nowait()
                 #self.display_queue.put(("data", 0, 0)) #self.monitor_ppg_queue.get()))
@@ -779,6 +779,20 @@ class Pipeline:
         global_vars.data_acquisition_running = True
         self.last_display_update = 0
         self.threads = [
+            ecg_thread := threading.Thread(
+                target=self.ecg,
+                args=(self.ecg_queue, self.monitor_ecg_queue),
+                daemon=True,
+                name="ECGThread",
+            ),
+            ppg_thread := threading.Thread(
+                target=self.ppg,
+                args=(self.ppg_queue, self.monitor_ppg_queue),
+                daemon=True,
+                name="PPGThread",
+            ),
+            ecg_log_thread := threading.Thread(target=self.ecglogger, daemon=True, name="ECGLogThread"),
+            ppg_log_thread := threading.Thread(target=self.ppglogger, daemon=True, name="PPGLogThread"),
             capture_thread := threading.Thread(
                 target=self.capture,
                 args=(self.frame_queue, self.ir_frame_queue, ),
@@ -797,25 +811,11 @@ class Pipeline:
                 daemon=True,
                 name="IRPreprocessThread",
             ),
-            ecg_thread := threading.Thread(
-                target=self.ecg,
-                args=(self.ecg_queue, self.monitor_ecg_queue),
-                daemon=True,
-                name="ECGThread",
-            ),
-            ppg_thread := threading.Thread(
-                target=self.ppg,
-                args=(self.ppg_queue, self.monitor_ppg_queue),
-                daemon=True,
-                name="PPGThread",
-            ),
             
         ]
 
         self.threads.append(monitor_thread := threading.Thread(target=self.monitor, daemon=True, name="MonitorThread"))
         # self.threads.append(display_thread := threading.Thread(target=self.perip_manager, args=(self.display_queue,), daemon=True, name="DisplayThread"))
-        self.threads.append(ecg_log_thread := threading.Thread(target=self.ecglogger, daemon=True, name="ECGLogThread"))
-        self.threads.append(ppg_log_thread := threading.Thread(target=self.ppglogger, daemon=True, name="PPGLogThread"))
         self.threads.append(picture_log_thread := threading.Thread(target=self.picturelogger, daemon=True, name="PictureLogThread"))
         self.threads.append(ir_picture_log_thread := threading.Thread(target=self.irpicturelogger, daemon=True, name="IRPictureLogThread"))
         self.threads.append(raw_frame_log_thread := threading.Thread(target=self.raw_frame_logger, daemon=True, name="RawPictureLogThread"))
@@ -994,7 +994,7 @@ def main():
     })
     ppg = PPG({
         "bus": 4,
-        "monitor": True,
+        "monitor": False,
     })
     peripmanager = PeripheralManager("/dev/ttyS4")
     print("[Main] Loading Peripherals...Done")

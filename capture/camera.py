@@ -135,7 +135,7 @@ class CameraCapture(CaptureBase):
                 time.sleep(0.01)
                 
             # 防止CPU过载
-            time.sleep(0.001)
+            time.sleep(0.005)
 
     def _capture_ir(self, ir_frame_queue):
         """IR摄像头采集线程"""
@@ -189,7 +189,7 @@ class CameraCapture(CaptureBase):
                 time.sleep(0.01)
                 
             # 防止CPU过载
-            time.sleep(0.001)
+            time.sleep(0.005)
 
     def cleanup(self):
         """Clean up camera resources"""
