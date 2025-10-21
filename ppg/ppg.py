@@ -19,7 +19,7 @@ class PPG(PPGBase):
         if isinstance(config_obj, dict):
             config_obj = MAX30101Config(**config_obj)
         self.sensor = MAX30101(bus=bus, address=address, config=config_obj)
-        self.poll_interval = config.get("poll_interval", 0.002)
+        self.poll_interval = config.get("poll_interval", 0.005)
 
     def enable(self) -> None:
         self.sensor.enable()

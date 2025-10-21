@@ -34,6 +34,7 @@ class FileMerger:
                 row_count = len(rows)
                 self.heap.extend(rows)
                 print(f"[FileMerger] Loaded {row_count} rows from {file}")
+                print(f"[FileMerger] Average SPS: {row_count / (timestamps[-1] - timestamps[0] + 1e-6):.2f}")
             except Exception as e:
                 print(f"[FileMerger] Error loading {file}: {e}")
                 continue

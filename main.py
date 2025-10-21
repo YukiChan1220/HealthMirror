@@ -502,8 +502,7 @@ class Pipeline:
         self.monitor_ecg_queue = queue.Queue()#maxsize=ecg_queue_size)
         self.ppg_queue = queue.Queue(maxsize=ppg_queue_size)    # (timestamp, red, ir, green)
         self.monitor_ppg_queue = queue.Queue(maxsize=ppg_queue_size)
-        self.display_queue = queue.Queue(maxsize=256)
-        self.max_display_points = config["max_display_points"]
+        self.hr_queue = queue.Queue(maxsize=16)
         self.time_limit = config["time_limit"]
         self.threads = []
         self.hr = None
@@ -521,7 +520,7 @@ class Pipeline:
             "warning": 8000,
         }
         self.last_ecg_quality_display = 0
-        self.ecg_quality_display_interval = 3.0 
+        self.ecg_quality_display_interval = 1.0 
         self.heart_rate_window_size = 10240
         self.heart_rate_calculation_buffer = deque(maxlen=self.heart_rate_window_size)
         self.last_heart_rate_calculation = 0
@@ -646,20 +645,17 @@ class Pipeline:
                 self.monitor_queue_status()
                 self._process_ecg_quality()
                 current_time = time.time()
-                if current_time - self.last_ecg_quality_display >= self.ecg_quality_display_interval:
+                if current_time - self.last_ecg_quality_display > self.ecg_quality_display_interval:
                     if self.current_heart_rate > 0:
-                        print(f"[Pipeline] ECG Quality: {self.ecg_quality}, Heart Rate: {self.current_heart_rate:.1f} BPM (caching mode)")
+                        print(f"[Pipeline] ECG Quality: {self.ecg_quality}, Heart Rate: {self.current_heart_rate:.1f} BPM")
                     else:
-                        print(f"[Pipeline] ECG Quality: {self.ecg_quality} (calculating heart rate...{len(self.heart_rate_calculation_buffer)} samples cached)")
+                        print(f"[Pipeline] ECG Quality: {self.ecg_quality}, {len(self.heart_rate_calculation_buffer)} samples cached)")
                     self.last_ecg_quality_display = current_time
-                time.sleep(0.1)
-                #if self.display_queue.full():
-                #    self.display_queue.get_nowait()
-                #self.display_queue.put(("data", 0, 0)) #self.monitor_ppg_queue.get()))
-                
+                time.sleep(0.2)
+
             except Exception as e:
                 print(f"[Pipeline] Error in results processing: {e}")
-                time.sleep(0.1)
+                time.sleep(0.2)
 
     def _process_ecg_quality(self):
         try:
@@ -684,8 +680,6 @@ class Pipeline:
                     self.ecg_quality = "warning"
                 else:
                     self.ecg_quality = "error"
-                if self.log and self.enable_ecg_debug_output:
-                    print(f"[Pipeline] ECG Range: {ecg_range:.1f}, Quality: {self.ecg_quality}")
             
             # hr calculation
             current_time = time.time()
@@ -698,8 +692,8 @@ class Pipeline:
             else:
                 dynamic_interval = self.heart_rate_calculation_interval
 
-            if (current_time - self.last_heart_rate_calculation >= dynamic_interval and
-                len(self.heart_rate_calculation_buffer) >= min_data_for_calculation):
+            if (current_time - self.last_heart_rate_calculation > dynamic_interval and
+                len(self.heart_rate_calculation_buffer) > min_data_for_calculation):
                 self._calculate_heart_rate()
                 self.last_heart_rate_calculation = current_time
                     
@@ -751,10 +745,8 @@ class Pipeline:
         try:
             if global_vars.data_acquisition_running and self.perip_manager and heart_rate is not None:
                 hr_display = max(30, min(200, int(round(heart_rate))))
-                #if self.display_queue.full():
-                #    self.display_queue.get_nowait()
-                # self.display_queue.put(("hr", hr_display, None))
-                #self.perip_manager.refresh_hr(hr_display)
+                self.hr_queue.put(hr_display)
+                # self.perip_manager.refresh_hr(hr_display)
                 print(f"[Pipeline] Heart rate displayed: {hr_display} BPM")
         except Exception as e:
             print(f"[Pipeline] Error updating heart rate display: {e}")
@@ -814,7 +806,7 @@ class Pipeline:
         ]
 
         self.threads.append(monitor_thread := threading.Thread(target=self.monitor, daemon=True, name="MonitorThread"))
-        # self.threads.append(display_thread := threading.Thread(target=self.perip_manager, args=(self.display_queue,), daemon=True, name="DisplayThread"))
+        self.threads.append(display_thread := threading.Thread(target=self.perip_manager, args=(self.hr_queue, self.monitor_ecg_queue, self.monitor_ppg_queue,), daemon=True, name="DisplayThread"))
         self.threads.append(picture_log_thread := threading.Thread(target=self.picturelogger, daemon=True, name="PictureLogThread"))
         self.threads.append(ir_picture_log_thread := threading.Thread(target=self.irpicturelogger, daemon=True, name="IRPictureLogThread"))
         self.threads.append(raw_frame_log_thread := threading.Thread(target=self.raw_frame_logger, daemon=True, name="RawPictureLogThread"))
@@ -933,8 +925,9 @@ class Pipeline:
             "ir_log_queue": self.ir_log_queue,
             "ecg_queue": self.ecg_queue,
             "ppg_queue": self.ppg_queue,
-            "display_queue": self.display_queue,
-            "monitor_ecg_queue": self.monitor_ecg_queue
+            "monitor_ecg_queue": self.monitor_ecg_queue,
+            "monitor_ppg_queue": self.monitor_ppg_queue,
+            "hr_queue": self.hr_queue
         }
         for name, q in queues.items():
             try:
@@ -993,7 +986,7 @@ def main():
     })
     ppg = PPG({
         "bus": 4,
-        "monitor": False,
+        "monitor": True,
     })
     peripmanager = PeripheralManager("/dev/ttyS4")
     print("[Main] Loading Peripherals...Done")
@@ -1032,7 +1025,6 @@ def main():
         "queue_monitor_interval": 5.0,
         "cache_log_interval": 10.0,
         "batch_size": batch_size,
-        "max_display_points": 128,
         "time_limit": time_limit,
         "fps": 30,
         "perip_manager": peripmanager,

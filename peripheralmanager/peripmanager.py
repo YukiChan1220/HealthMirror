@@ -20,7 +20,18 @@ class PeripheralManager(PeripheralManagerBase):
             print(f"[PeripheralManager] Initialized with serial port: {serial_port}")
         except Exception as e:
             print(f"[FATAL] [PeripheralManager] Serial port initialization failed: {e}, exiting")
-            os._exit(1)  # Exit if serial port initialization fails
+            os._exit(1)
+        
+        self.ecg_buffer = []
+        self.ppg_buffer = []
+        self.avg_ecg = 0
+        self.avg_ppg = 0
+        self.ecg_avg_count = 17
+        self.ppg_avg_count = 3
+        self.refresh_ecg = False
+        self.refresh_ppg = False
+        self.ecg_fs = 512
+        self.ppg_fs = 100
         
     def get_battery_level(self) -> int:
         self.serial_port.reset_input_buffer()
@@ -40,12 +51,12 @@ class PeripheralManager(PeripheralManagerBase):
             data_buf = bytearray([0xFF, 0xFF, 0xFF])
             data_buf.append(ecg_data >> 8)
             data_buf.append(ecg_data & 0xFF)
-            data_buf.append(ppg_data >> 16 & 0x3F)
+            data_buf.append((ppg_data >> 16) & 0x3F)
             data_buf.append((ppg_data >> 8) & 0xFF)
             data_buf.append(ppg_data & 0xFF)
             self.serial_port.write(data_buf)
         except Exception as e:
-            print(f"[PeripheralManager] Error sending curve data: {e}")
+            print(f"[PeripheralManager] Error sending curve data: {e}, {ecg_data}, {ppg_data}")
 
     def refresh_hr(self, hr_data) -> None:
         try:
@@ -58,25 +69,52 @@ class PeripheralManager(PeripheralManagerBase):
         except Exception as e:
             print(f"[PeripheralManager] Error sending HR data: {e}")
 
-    def refresh_data(self, data: tuple):
-        if global_vars.data_acquisition_running:
-            data_type, ecg, ppg = data
-            if data_type == "hr":
-                self.refresh_hr(ecg)
-            elif data_type == "data":
-                self.refresh_curve(ecg, ppg)
-
     # automatically fetch data from the queue
-    # data format: (type("hr" or "data"), ecg, ppg)
-    def __call__(self, data_queue: Queue):
+    def __call__(self, hr_queue: Queue, ecg_queue: Queue, ppg_queue: Queue) -> None:
         while global_vars.data_acquisition_running:
             try:
-                data_type, ecg, ppg = data_queue.get(timeout=1)
-                if data_type == "hr":
-                    self.refresh_hr(ecg)
-                elif data_type == "data":
-                    self.refresh_curve(ecg, ppg)
+                hr = hr_queue.get_nowait()
+                if hr is not None:
+                    self.refresh_hr(hr)
             except queue.Empty:
-                time.sleep(0.05)
-                continue
+                pass
+            except Exception as e:
+                print(f"[PeripheralManager] Error processing HR data: {e}")
+                
+            try:
+                ecg = ecg_queue.get_nowait()
+                if ecg is not None and len(self.ecg_buffer) < 17:
+                    self.ecg_buffer.append(ecg[1])
+                else:
+                    self.avg_ecg = (sum(self.ecg_buffer) + ecg[1]) / 17
+                    self.ecg_buffer.clear()
+                    self.refresh_ecg = True
+            except queue.Empty:
+                pass
+            except Exception as e:
+                print(f"[PeripheralManager] Error processing ECG data: {e}")
+
+            try:
+                ppg = ppg_queue.get_nowait()
+                if ppg is not None and len(self.ppg_buffer) < 3:
+                    self.ppg_buffer.append(ppg)
+                else:
+                    self.avg_ppg = (sum(self.ppg_buffer) + ppg) / 3
+                    self.ppg_buffer.clear()
+                    self.refresh_ppg = True
+            except queue.Empty:
+                pass
+            except Exception as e:
+                print(f"[PeripheralManager] Error processing PPG data: {e}")
+
+            if self.refresh_ecg and self.refresh_ppg:
+                self.refresh_curve(self.avg_ecg + 32768, self.avg_ppg)
+                self.refresh_ecg = False
+                self.refresh_ppg = False
+            
+            time.sleep(0.005)
+
+        self.ecg_buffer.clear()
+        self.ppg_buffer.clear()
+                
             
