@@ -45,9 +45,9 @@ def main(duration: float = 10.0) -> None:
     ir = [row[2] for row in samples]
     green = [row[3] for row in samples]
     fs = len(samples) / duration
-    red = bandpass_filter(red, fs=fs) if any(value is not None for value in red) else red
-    ir = bandpass_filter(ir, fs=fs) if any(value is not None for value in ir) else ir
-    green = bandpass_filter(green, fs=fs) if any(value is not None for value in green) else green
+    #red = bandpass_filter(red, fs=fs) if any(value is not None for value in red) else red
+    #ir = bandpass_filter(ir, fs=fs) if any(value is not None for value in ir) else ir
+    #green = bandpass_filter(green, fs=fs) if any(value is not None for value in green) else green
 
     print(f"Captured {len(samples)} samples over {duration} seconds, fs={fs:.2f} Hz")
 

@@ -37,7 +37,6 @@ class PeripheralManager(PeripheralManagerBase):
         self.ppg_std_alpha = 0.01
         self.ecg_mean = None
         self.ppg_mean = None
-        self.ppg_avg = 0
         self.ecg_var = None
         self.ppg_var = None
 
@@ -139,27 +138,16 @@ class PeripheralManager(PeripheralManagerBase):
                     ppg, self.ppg_mean, self.ppg_var = self.detrend_and_normalize(ppg, self.ppg_mean, self.ppg_var, self.ppg_mean_alpha, self.ppg_std_alpha, 156, 32)
                     ppg = max(0, min(255, int(ppg)))
                     if self.ppg_count < self.ppg_display_window_size:
-                        self.ppg_avg += ppg
                         if ppg > self.ppg_high:
                             self.ppg_high = ppg
                         if ppg < self.ppg_low:
                             self.ppg_low = ppg
                         self.ppg_count += 1
                     else:
-                        self.ppg_avg += ppg
-                        self.ppg_avg /= self.ppg_display_window_size
-                        print(f"[PeripheralManager] PPG mean updated: {self.ppg_avg}")
                         if ppg > self.ppg_high:
                             self.ppg_high = ppg
                         if ppg < self.ppg_low:
                             self.ppg_low = ppg
-
-                        self.ppg_high = int(self.ppg_avg) + 1
-                        self.ppg_low = int(self.ppg_avg) - 1
-                        self.ppg_high = max(0, min(255, self.ppg_high))
-                        self.ppg_low = max(0, min(255, self.ppg_low))
-
-                        self.ppg_avg = 0
                         self.refresh_ppg = True
                         self.ppg_count = 0
             except queue.Empty:
@@ -186,13 +174,13 @@ class PeripheralManager(PeripheralManagerBase):
         self.ecg_low = 0xFF
         self.ppg_high = 0
         self.ppg_low = 0xFF
-        self.ecg_display_window_size = 17
+        self.ecg_display_window_size = 8
         self.ppg_display_window_size = 3
 
-        self.ecg_mean_alpha = 0.001
-        self.ppg_mean_alpha = 0.002
-        self.ecg_std_alpha = 0.001
-        self.ppg_std_alpha = 0.002
+        self.ecg_mean_alpha = 0.008
+        self.ppg_mean_alpha = 0.1
+        self.ecg_std_alpha = 0.008
+        self.ppg_std_alpha = 0.01
         self.ecg_mean = None
         self.ppg_mean = None
         self.ecg_var = None
@@ -200,4 +188,6 @@ class PeripheralManager(PeripheralManagerBase):
 
         self.refresh_ecg = False
         self.refresh_ppg = False
+        self.ecg_fs = 512
+        self.ppg_fs = 100
             

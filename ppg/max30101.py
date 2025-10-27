@@ -10,13 +10,13 @@ from .base import PPGBase, PPGSample
 
 @dataclass(frozen=True)
 class MAX30101Config:
-    sample_rate_hz: int = 400
+    sample_rate_hz: int = 1600
     led_mode: int = 3
     adc_range: int = 16384
     pulse_width: int = 411
-    sample_average: int = 4
+    sample_average: int = 1
     fifo_rollover: bool = True
-    led_currents: Tuple[int, int, int] = (0x88, 0x88, 0x88)
+    led_currents: Tuple[int, int, int] = (0xE0, 0xE0, 0xE0)
 
 
 class MAX30101(PPGBase):
@@ -53,7 +53,7 @@ class MAX30101(PPGBase):
         bus: Union[int, SMBus] = 4,
         address: int = DEFAULT_ADDRESS,
         config: Optional[MAX30101Config] = None,
-        auto_start: bool = True,
+        auto_start: bool = False,
     ) -> None:
         self.address = address
         if isinstance(bus, SMBus):
