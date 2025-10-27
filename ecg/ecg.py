@@ -24,13 +24,14 @@ class ECG(ECGBase):
         # TODO: Implement filtering logic
         pass
 
-    def __call__(self, raw_ecg_queue: Queue, monitor_ecg_queue: Queue) -> None:
+    def __call__(self, raw_ecg_queue: Queue, monitor_ecg_queue: Queue, display_ecg_queue: Queue) -> None:
         self.bmd101.flush_buffer()
         while global_vars.pipeline_running and global_vars.data_acquisition_running:
             ecg_data = self.read_bmd101()
             if ecg_data is not None:
                 raw_ecg_queue.put(ecg_data)
                 monitor_ecg_queue.put(ecg_data)
+                display_ecg_queue.put(ecg_data)
             else:
                 time.sleep(0.001)
         

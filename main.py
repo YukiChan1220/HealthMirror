@@ -499,9 +499,10 @@ class Pipeline:
         self.log_queue1 = queue.Queue(maxsize=log_queue_size)
         self.ir_log_queue1 = queue.Queue(maxsize=log_queue_size)
         self.ecg_queue = queue.Queue(maxsize=ecg_queue_size)
-        self.monitor_ecg_queue = queue.Queue()#maxsize=ecg_queue_size)
+        self.monitor_ecg_queue = queue.Queue()
+        self.display_ecg_queue = queue.Queue()
         self.ppg_queue = queue.Queue(maxsize=ppg_queue_size)    # (timestamp, red, ir, green)
-        self.monitor_ppg_queue = queue.Queue(maxsize=ppg_queue_size)
+        self.display_ppg_queue = queue.Queue(maxsize=ppg_queue_size)
         self.hr_queue = queue.Queue(maxsize=16)
         self.time_limit = config["time_limit"]
         self.threads = []
@@ -772,13 +773,13 @@ class Pipeline:
         self.threads = [
             ecg_thread := threading.Thread(
                 target=self.ecg,
-                args=(self.ecg_queue, self.monitor_ecg_queue),
+                args=(self.ecg_queue, self.monitor_ecg_queue, self.display_ecg_queue),
                 daemon=True,
                 name="ECGThread",
             ),
             ppg_thread := threading.Thread(
                 target=self.ppg,
-                args=(self.ppg_queue, self.monitor_ppg_queue),
+                args=(self.ppg_queue, self.display_ppg_queue),
                 daemon=True,
                 name="PPGThread",
             ),
@@ -806,7 +807,7 @@ class Pipeline:
         ]
 
         self.threads.append(monitor_thread := threading.Thread(target=self.monitor, daemon=True, name="MonitorThread"))
-        self.threads.append(display_thread := threading.Thread(target=self.perip_manager, args=(self.hr_queue, self.monitor_ecg_queue, self.monitor_ppg_queue,), daemon=True, name="DisplayThread"))
+        self.threads.append(display_thread := threading.Thread(target=self.perip_manager, args=(self.hr_queue, self.display_ecg_queue, self.display_ppg_queue), daemon=True, name="DisplayThread"))
         self.threads.append(picture_log_thread := threading.Thread(target=self.picturelogger, daemon=True, name="PictureLogThread"))
         self.threads.append(ir_picture_log_thread := threading.Thread(target=self.irpicturelogger, daemon=True, name="IRPictureLogThread"))
         self.threads.append(raw_frame_log_thread := threading.Thread(target=self.raw_frame_logger, daemon=True, name="RawPictureLogThread"))
@@ -873,7 +874,7 @@ class Pipeline:
         else:
             print(f"[Pipeline] Timeout waiting for log queues to empty after {max_wait_time}s")
         
-        print("[Pipeline] Stage 4: Stopping all threads and finalizing...")
+        print("[Pipeline] Stage 3: Stopping all threads and finalizing...")
         global_vars.pipeline_running = False
         print("[Pipeline] Set pipeline_running to False, allowing all threads to exit")
         if self.session_manager and self.session_manager.get_time_offset() is not None:
@@ -926,7 +927,8 @@ class Pipeline:
             "ecg_queue": self.ecg_queue,
             "ppg_queue": self.ppg_queue,
             "monitor_ecg_queue": self.monitor_ecg_queue,
-            "monitor_ppg_queue": self.monitor_ppg_queue,
+            "display_ecg_queue": self.display_ecg_queue,
+            "display_ppg_queue": self.display_ppg_queue,
             "hr_queue": self.hr_queue
         }
         for name, q in queues.items():

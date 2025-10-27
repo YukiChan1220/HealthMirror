@@ -22,12 +22,25 @@ class PeripheralManager(PeripheralManagerBase):
             print(f"[FATAL] [PeripheralManager] Serial port initialization failed: {e}, exiting")
             os._exit(1)
         
-        self.ecg_buffer = []
-        self.ppg_buffer = []
-        self.avg_ecg = 0
-        self.avg_ppg = 0
-        self.ecg_avg_count = 17
-        self.ppg_avg_count = 3
+        self.ecg_count = 0
+        self.ppg_count = 0
+        self.ecg_high = 0
+        self.ecg_low = 0xFF
+        self.ppg_high = 0
+        self.ppg_low = 0xFF
+        self.ecg_display_window_size = 8
+        self.ppg_display_window_size = 3
+
+        self.ecg_mean_alpha = 0.008
+        self.ppg_mean_alpha = 0.1
+        self.ecg_std_alpha = 0.008
+        self.ppg_std_alpha = 0.01
+        self.ecg_mean = None
+        self.ppg_mean = None
+        self.ppg_avg = 0
+        self.ecg_var = None
+        self.ppg_var = None
+
         self.refresh_ecg = False
         self.refresh_ppg = False
         self.ecg_fs = 512
@@ -35,7 +48,7 @@ class PeripheralManager(PeripheralManagerBase):
         
     def get_battery_level(self) -> int:
         self.serial_port.reset_input_buffer()
-        self.serial_port.write(b'\xFD\xFD\xFD\x00\x00\x00\x00\x00')
+        self.serial_port.write(b'\xFD\xFD\x00\x00\x00\x00')
         time.sleep(0.1)  # wait for the response
         response = self.serial_port.read(self.serial_port.in_waiting)
         print(f"[PeripheralManager] Battery level response: {response}")
@@ -44,19 +57,13 @@ class PeripheralManager(PeripheralManagerBase):
             return batt_level if 0 <= batt_level <= 100 else 0
         return -1
     
-    def refresh_curve(self, ecg_data, ppg_data) -> None:
+    def refresh_curve(self, ecg_data_h, ecg_data_l, ppg_data_h, ppg_data_l) -> None:
         try:
-            ppg_data = int(ppg_data)
-            ecg_data = int(ecg_data)
-            data_buf = bytearray([0xFF, 0xFF, 0xFF])
-            data_buf.append(ecg_data >> 8)
-            data_buf.append(ecg_data & 0xFF)
-            data_buf.append((ppg_data >> 16) & 0x3F)
-            data_buf.append((ppg_data >> 8) & 0xFF)
-            data_buf.append(ppg_data & 0xFF)
+            data_buf = bytearray([0xFF, 0xFF])
+            data_buf.extend([ecg_data_h, ecg_data_l, ppg_data_h, ppg_data_l])
             self.serial_port.write(data_buf)
         except Exception as e:
-            print(f"[PeripheralManager] Error sending curve data: {e}, {ecg_data}, {ppg_data}")
+            print(f"[PeripheralManager] Error sending curve data: {e}, {data_buf}")
 
     def refresh_hr(self, hr_data) -> None:
         try:
@@ -64,16 +71,34 @@ class PeripheralManager(PeripheralManagerBase):
             if not (0 <= hr_data <= 255):
                 print(f"[PeripheralManager] Warning: HR data out of range: {hr_data}")
                 return
-            data_buf = bytearray([0xFE, 0xFE, 0xFE, hr_data, 0x00, 0x00, 0x00, 0x00])
+            data_buf = bytearray([0xFE, 0xFE, hr_data, 0x00, 0x00, 0x00])
             self.serial_port.write(data_buf)
         except Exception as e:
             print(f"[PeripheralManager] Error sending HR data: {e}")
+
+    def detrend_and_normalize(self, data, mean, var, mean_alpha, std_alpha, set_mean, set_std):
+        if data is None:
+            return None, mean, var
+        if mean is None:
+            mean = data
+            var = 1e-6
+        else:
+            mean = mean_alpha * data + (1 - mean_alpha) * mean
+            diff = data - mean
+            var = std_alpha * (diff * diff) + (1 - std_alpha) * var
+
+        std = var ** 0.5 + 1e-6
+        normalized_data = int((data - mean) / std * set_std + set_mean)  # normalize to mean 128, std 128
+        return normalized_data, mean, var
+    
 
     # automatically fetch data from the queue
     def __call__(self, hr_queue: Queue, ecg_queue: Queue, ppg_queue: Queue) -> None:
         while global_vars.data_acquisition_running:
             try:
-                hr = hr_queue.get_nowait()
+                hr = None
+                while not hr_queue.empty():
+                    hr = hr_queue.get_nowait()
                 if hr is not None:
                     self.refresh_hr(hr)
             except queue.Empty:
@@ -82,39 +107,97 @@ class PeripheralManager(PeripheralManagerBase):
                 print(f"[PeripheralManager] Error processing HR data: {e}")
                 
             try:
-                ecg = ecg_queue.get_nowait()
-                if ecg is not None and len(self.ecg_buffer) < 17:
-                    self.ecg_buffer.append(ecg[1])
-                else:
-                    self.avg_ecg = (sum(self.ecg_buffer) + ecg[1]) / 17
-                    self.ecg_buffer.clear()
-                    self.refresh_ecg = True
+                ecg = None
+                while not ecg_queue.empty():
+                    ecg = ecg_queue.get_nowait()[1]
+                if ecg is not None:
+                    ecg, self.ecg_mean, self.ecg_var = self.detrend_and_normalize(ecg, self.ecg_mean, self.ecg_var, self.ecg_mean_alpha, self.ecg_std_alpha, 48, 24)
+                    ecg = max(0, min(255, int(ecg)))
+                    if self.ecg_count < self.ecg_display_window_size:
+                        if ecg > self.ecg_high:
+                            self.ecg_high = ecg
+                        if ecg < self.ecg_low:
+                            self.ecg_low = ecg
+                        self.ecg_count += 1
+                    else:
+                        if ecg > self.ecg_high:
+                            self.ecg_high = ecg
+                        if ecg < self.ecg_low:
+                            self.ecg_low = ecg
+                        self.refresh_ecg = True
+                        self.ecg_count = 0
             except queue.Empty:
                 pass
             except Exception as e:
                 print(f"[PeripheralManager] Error processing ECG data: {e}")
 
             try:
-                ppg = ppg_queue.get_nowait()
-                if ppg is not None and len(self.ppg_buffer) < 3:
-                    self.ppg_buffer.append(ppg)
-                else:
-                    self.avg_ppg = (sum(self.ppg_buffer) + ppg) / 3
-                    self.ppg_buffer.clear()
-                    self.refresh_ppg = True
+                ppg = None
+                while not ppg_queue.empty():
+                    ppg = ppg_queue.get_nowait()
+                if ppg is not None:
+                    ppg, self.ppg_mean, self.ppg_var = self.detrend_and_normalize(ppg, self.ppg_mean, self.ppg_var, self.ppg_mean_alpha, self.ppg_std_alpha, 156, 32)
+                    ppg = max(0, min(255, int(ppg)))
+                    if self.ppg_count < self.ppg_display_window_size:
+                        self.ppg_avg += ppg
+                        if ppg > self.ppg_high:
+                            self.ppg_high = ppg
+                        if ppg < self.ppg_low:
+                            self.ppg_low = ppg
+                        self.ppg_count += 1
+                    else:
+                        self.ppg_avg += ppg
+                        self.ppg_avg /= self.ppg_display_window_size
+                        print(f"[PeripheralManager] PPG mean updated: {self.ppg_avg}")
+                        if ppg > self.ppg_high:
+                            self.ppg_high = ppg
+                        if ppg < self.ppg_low:
+                            self.ppg_low = ppg
+
+                        self.ppg_high = int(self.ppg_avg) + 1
+                        self.ppg_low = int(self.ppg_avg) - 1
+                        self.ppg_high = max(0, min(255, self.ppg_high))
+                        self.ppg_low = max(0, min(255, self.ppg_low))
+
+                        self.ppg_avg = 0
+                        self.refresh_ppg = True
+                        self.ppg_count = 0
             except queue.Empty:
                 pass
             except Exception as e:
                 print(f"[PeripheralManager] Error processing PPG data: {e}")
 
             if self.refresh_ecg and self.refresh_ppg:
-                self.refresh_curve(self.avg_ecg + 32768, self.avg_ppg)
-                self.refresh_ecg = False
-                self.refresh_ppg = False
+                self.refresh_curve(self.ecg_high, self.ecg_low, self.ppg_high, self.ppg_low)
+                if self.refresh_ecg:
+                    self.ecg_high = 0
+                    self.ecg_low = 0xFF
+                    self.refresh_ecg = False
+                if self.refresh_ppg:
+                    self.ppg_high = 0
+                    self.ppg_low = 0xFF
+                    self.refresh_ppg = False
             
             time.sleep(0.005)
-
-        self.ecg_buffer.clear()
-        self.ppg_buffer.clear()
                 
+        self.ecg_count = 0
+        self.ppg_count = 0
+        self.ecg_high = 0
+        self.ecg_low = 0xFF
+        self.ppg_high = 0
+        self.ppg_low = 0xFF
+        self.ecg_display_window_size = 17
+        self.ppg_display_window_size = 3
+
+        self.ecg_mean_alpha = 0.001
+        self.ppg_mean_alpha = 0.002
+        self.ecg_std_alpha = 0.001
+        self.ppg_std_alpha = 0.002
+        self.ecg_mean = None
+        self.ppg_mean = None
+        self.ecg_var = None
+        self.ppg_var = None
+
+        self.refresh_ecg = False
+        self.refresh_ppg = False
             
