@@ -491,9 +491,7 @@ class Pipeline:
         ppg_queue_size = config.get("ppg_queue_size", 1024)
 
         self.frame_queue = queue.Queue(maxsize=frame_queue_size)
-        self.raw_frame_queue = queue.Queue(maxsize=frame_queue_size)
         self.ir_frame_queue = queue.Queue(maxsize=frame_queue_size)
-        self.raw_ir_frame_queue = queue.Queue(maxsize=frame_queue_size)
         self.log_queue = queue.Queue(maxsize=log_queue_size)
         self.ir_log_queue = queue.Queue(maxsize=log_queue_size)
         self.log_queue1 = queue.Queue(maxsize=log_queue_size)
@@ -924,6 +922,8 @@ class Pipeline:
             "ir_frame_queue": self.ir_frame_queue,
             "log_queue": self.log_queue,
             "ir_log_queue": self.ir_log_queue,
+            "log_queue1": self.log_queue1,
+            "ir_log_queue1": self.ir_log_queue1,
             "ecg_queue": self.ecg_queue,
             "ppg_queue": self.ppg_queue,
             "monitor_ecg_queue": self.monitor_ecg_queue,
