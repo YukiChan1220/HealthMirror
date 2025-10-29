@@ -2,4 +2,4 @@ bluetooth_running = False
 bluetooth_interrupt = False
 pipeline_running = False
 data_acquisition_running = False
-device_id = "04"
+device_id = "05"
