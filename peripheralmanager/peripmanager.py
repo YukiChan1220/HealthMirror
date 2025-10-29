@@ -47,13 +47,15 @@ class PeripheralManager(PeripheralManagerBase):
         
     def get_battery_level(self) -> int:
         self.serial_port.reset_input_buffer()
-        self.serial_port.write(b'\xFD\xFD\x00\x00\x00\x00')
-        time.sleep(0.1)  # wait for the response
-        response = self.serial_port.read(self.serial_port.in_waiting)
-        print(f"[PeripheralManager] Battery level response: {response}")
-        if response.isdigit():
-            batt_level = int(response)
-            return batt_level if 0 <= batt_level <= 100 else 0
+        self.serial_port.write(bytearray([0xFD, 0xFD, 0x00, 0x00, 0x00, 0x00]))
+        time.sleep(0.5)  # wait for the response
+        try:
+            response = self.serial_port.read_all()
+            print(f"[PeripheralManager] Battery level response: {response.hex()}")
+            batt_level = response[0]
+            return batt_level
+        except Exception as e:
+            print(f"[PeripheralManager] Error getting battery level: {e}")
         return -1
     
     def refresh_curve(self, ecg_data_h, ecg_data_l, ppg_data_h, ppg_data_l) -> None:
