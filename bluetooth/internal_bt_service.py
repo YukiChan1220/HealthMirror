@@ -1,7 +1,9 @@
 import bluetooth
 import os
 import time
+from queue import Queue
 from base import BluetoothBase
+import global_vars
 
 os.system("sdptool add SP")
 
@@ -37,7 +39,6 @@ finally:
     client_sock.close()
     server_sock.close()
 
-
 class Bluetooth(BluetoothBase):
     def __init__(self):
         # TODO: ? super().__init__()
@@ -69,13 +70,14 @@ class Bluetooth(BluetoothBase):
             service_classes=["00001101-0000-1000-8000-00805F9B34FB", bluetooth.SERIAL_PORT_CLASS],
             profiles=[bluetooth.SERIAL_PORT_PROFILE])
 
-print(f"Listening {port}...")
+        print(f"Listening {port}...")
+
     
     def listen(self, rx_data: Queue):
         # create a serial listener with json decoding
         while True:
             try:
-                if self.serial.in_waiting > 0:
+                if :
                     time.sleep(self.transmit_interval)
                     data = self.serial.read(self.serial.in_waiting).decode('utf-8')
                     if data:
