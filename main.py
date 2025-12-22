@@ -556,12 +556,14 @@ class Pipeline:
             "data_queue": self.ppg_queue,
         })
         
+        """
         self.filemerger = FileMerger(
             input_files=[(["ppg_red", "ppg_ir", "ppg_green"], session_paths["ppg_log"]), (["ecg"], session_paths["ecg_log"])],
             output_path=session_paths["merged_log"]
         )
         for video_path in [session_paths["video_path"], session_paths["ir_video_path"]]:
             os.makedirs(os.path.dirname(video_path), exist_ok=True)
+        """
 
         self.picturelogger = PictureLogger({
             "video_path": session_paths["video_path"],
@@ -590,13 +592,16 @@ class Pipeline:
             "image_type": "raw"
         })
 
+        """
         for path in [session_paths["merged_log"], session_paths["normalized_log"]]:
             os.makedirs(os.path.dirname(path), exist_ok=True)
 
+        
         self.normalizer = Normalizer(
             rawpath=session_paths["merged_log"], 
             outpath=session_paths["normalized_log"]
         )
+        """
         
         print(f"[Pipeline] Pipeline paths updated for session: {session_paths['session_dir']}")
 
@@ -901,15 +906,18 @@ class Pipeline:
                 traceback.print_exc()
         else:
             print("[Pipeline] No time offset available, skipping timestamp conversion")
+        """
         try:
             self.filemerger()
         except Exception as e:
             print(f"[Pipeline] File merge failed: {e}")
         
+        
         try:
             self.normalizer()
         except Exception as e:
             print(f"[Pipeline] Normalization failed: {e}")
+        """
         
         time.sleep(1)
         self.clear()
