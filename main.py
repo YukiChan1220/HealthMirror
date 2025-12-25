@@ -210,7 +210,7 @@ class BluetoothHandler:
         self.bluetooth = Bluetooth()
         self.rx_queue = queue.Queue()
         self.tx_queue = queue.Queue()
-        self.device_id = 1
+        self.device_id = global_vars.device_id
         self.session_manager = SessionManager()
         self.server_uploader = ServerUploader()
         self.handler_thread = None
