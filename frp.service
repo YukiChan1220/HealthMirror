@@ -7,7 +7,7 @@ Wants=network-online.target
 User=root
 ExecStart=/root/frp_0.57.0_linux_arm64/frpc -c /root/frp_0.57.0_linux_arm64/frpc.toml
 Restart=always
-RestartSec=10
+RestartSec=60
 
 [Install]
 WantedBy=multi-user.target
